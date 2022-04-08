@@ -1,1 +1,1 @@
-# tstephie-UMICH-CDS-SR-scRNA-seq-Workshop-2022
+# UMICH-CDS-SR-scRNA-seq-Workshop-2022
