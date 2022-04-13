@@ -6,7 +6,7 @@ workshop.
 
 Dates: April 18-19, 2022
 
-## How to download material
+## How to Download Workshop Material
 
 ### Dataset (Counts Matrices and Seurat Objects)
 The example datasets used in this workshop are found in the Google Drive link here:  
@@ -14,6 +14,10 @@ https://drive.google.com/drive/folders/1T2YJcnFyNdmY8ohfN4hAu4JVgQFyZ-v2?usp=sha
 
 ### Lecture Slides and Coding Scripts
 Lecture slides for Section 1 and coding scripts for both sections can be found at this Github page. 
+
+## How to Setup Computer for Section 2 (Lab Section):
+Please take a look at the document here of how to setup R, Rstudio, and packages:
+
 
 ## Schedule (Tentative)
 
