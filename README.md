@@ -17,7 +17,7 @@ Lecture slides for Section 1 and coding scripts for both sections can be found a
 
 ## How to Setup Computer for Section 2 (Lab Section):
 Please take a look at the document here of how to setup R, Rstudio, and packages:  
-https://github.com/tstephie/UMICH-CDS-SR-scRNA-seq-Workshop-2022/tree/main/section_2
+https://github.com/tstephie/UMICH-CDS-SR-scRNA-seq-Workshop-2022/blob/main/section_2/How%20to%20Setup%20for%20Section%202.docx
 
 ## Schedule (Tentative)
 
