@@ -1,0 +1,498 @@
+---
+title: "CDS scRNA-seq Workshop 2022 Section 2 - Integration Pipeline"
+author: "Stephanie The"
+date: '2022-04-06'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+editor_options: 
+  markdown: 
+    wrap: 72
+  chunk_output_type: console
+---
+
+# Packages
+
+**If you are starting a new session, you will need to reload the
+packages and run the code below:**  
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(RColorBrewer)
+library(scales)
+library(cowplot)
+library(patchwork)
+library(grid)
+library(gridExtra)
+library(harmony)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ReactomePA)
+library(msigdbr)
+
+```
+
+```{r}
+# set seed
+set.seed(1383)
+
+# set # of PCs (from standard pipeline)
+pcs <- 18 
+
+# set working directory 
+setwd('D:/scRNA-seq pipeline/pasca_dataset/')
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Batch Correction/Integration Analysis
+
+Batch effects can come from technical and biological variation across samples. In the standard pipeline, we reduced as much variation with normalization and scaling, but sometimes there are some effects that can't be reduced with these steps. At that point, we will have to do batch correction or integration.  
+
+In the standard pipeline, we found that *sample_id* is the batch variable that affects the separation in this dataset. This batch variable will be used for integration.  
+
+I will be showing you two integration tools that are commonly and easily used with Seurat. You can find more information about these tools at the links below and also the lecture/supplemental slides from Section 1. 
+
+- Harmony
+  - https://github.com/immunogenomics/harmony
+- Seurat integration
+  - https://satijalab.org/seurat/articles/integration_introduction.html
+
+We won't be running the code for both of the integration tools because of reproducibility reasons, but the objects are provided.
+
+------------------------------------------------------------------------
+
+## Harmony
+
+Harmony is an scRNA-seq integration tool in R that uses soft clustering to align datasets/batches. We will start the Harmony pipeline after the PCA step with the merged object we created in the standard pipeline.  
+
+**DO NOT RUN THIS PART!!!**  
+I have already run this integration pipeline for you, so you do not have to. It is to ensure that we get the same results for this workshop. I have provided the integrated object here:  
+
+```{r}
+# load Seurat Harmony object
+merged_ob <- readRDS('D:/scRNA-seq pipeline/pasca_dataset/cds_pasca_example_umap_harmony_032322.rds')
+
+```
+
+------------------------------------------------------------------------
+
+### Integration
+
+The default reduction Harmony will use is PCA, which you can specify the PCs that are important (with the *dim.use* parameter). Using the results from PCA helps to speed up processing with Harmony. Since it uses PCA results, it will also use scaled data. To specify what the batch variable is to integrate on, we will use the *group.by.vars* parameter.  
+
+```{r}
+# ?RunHarmony
+# merged_ob <- RunHarmony(merged_ob, group.by.vars = c('sample_id'), dims.use = 1:pcs)
+
+```
+
+The output of Harmony with Seurat is a new reduction in the object called *harmony* (unless specified as some other name).  
+
+------------------------------------------------------------------------
+
+### Clustering
+
+Clustering with Harmony is the same as in the standard pipeline, but you will want to specify the *reduction* parameter as 'harmony' in the *FindNeighbors()* function.  
+
+Also, be sure to store your new cluster #s in the metadata slot.   
+
+```{r}
+# find neighbors
+# merged_ob <- FindNeighbors(merged_ob, dims = 1:pcs, k.param = 20, reduction = 'harmony')
+
+# find clusters
+# merged_ob <- FindClusters(merged_ob)
+
+# look at how many clusters we get 
+# head(Idents(merged_ob), 5)
+
+# store clusters in metadata slot
+# merged_ob$harmony_clusters <- Idents(merged_ob)
+
+```
+
+------------------------------------------------------------------------
+
+### Non-Linear Dimension Reduction - UMAP
+
+UMAP with Harmony is the same as in the standard pipeline, but you will want to specify the *reduction* parameter as *harmony* in the *RunUMAP()* function.  
+
+```{r fig.height=5, fig.width=7}
+# run UMAP
+# merged_ob <- RunUMAP(merged_ob, dims = 1:pcs, reduction = 'harmony', reduction.name = 'umap_harmony')
+
+```
+
+<br>
+
+Let's look at the finished integrated object we loaded in at the start of the Seurat integration pipeline. To specify what cluster #s you want to plot on the UMAP, you will want to use the 'group.by' parameter. We will use the *harmony_clusters* cluster #s we found through clustering above.  
+
+```{r fig.height=5, fig.width=7}
+# plot UMAP (with harmony_clusters)
+DimPlot(merged_ob, group.by = 'harmony_clusters', reduction = 'umap_harmony')
+
+```
+
+```{r fig.height=5, fig.width=7}
+# plot UMAP (with harmony_clusters and labeled)
+DimPlot(merged_ob, group.by = 'harmony_clusters', label = T, reduction = 'umap_harmony')
+
+```
+
+<br>
+
+To check if integration went well, we can add 'sample_id' to the *group.by* parameter. As we can see, the samples are all mixed together well within each cluster.  
+
+```{r fig.height=5, fig.width=12}
+# plot UMAP (with harmony_clusters and sample_id)
+DimPlot(merged_ob, group.by = c('harmony_clusters', 'sample_id'), reduction = 'umap_harmony')
+
+```
+
+------------------------------------------------------------------------
+
+### Save Object (Harmony integrated)
+```{r eval=FALSE}
+saveRDS(merged_ob, file = 'cds_pasca_example_umap_harmony_032322.rds')
+
+```
+
+------------------------------------------------------------------------
+
+### DE
+
+We will also re-run DE but on the cluster #s from Harmony.  
+
+```{r}
+# DO NOT RUN
+# # make sure active identity is 'harmony_clusters'
+# levels(merged_ob)
+#
+# # run DE
+# de <- FindAllMarkers(merged_ob)
+#
+# # save DE table
+# write_csv(de, 'tables/cds_pasca_example_harmony_clusters_de_032422.csv')
+
+```
+
+<br>
+
+Instead of running all the clusters right now, I have run it for you because it can take a long time. You can load in the full DE table with the code below:  
+
+```{r}
+de <- read_csv('D:/scRNA-seq pipeline/pasca_dataset/tables/cds_pasca_example_harmony_clusters_de_032422.csv')
+
+```
+
+<br>
+
+We can also filter this new DE table to find the most important DE genes.  
+
+```{r}
+de_filt <- de %>% dplyr::filter(p_val_adj < .05) %>% arrange(-avg_log2FC)
+  
+```
+
+**We will be using the Harmony clusters for cell annotation and additional downstream analyses.**    
+
+------------------------------------------------------------------------
+
+## Seurat Integration
+  
+Within Seurat, there is an integration pipeline. We will start at the QC filtered sample objects since *sample_id* is the batch variable. Remember *sample_id* is specific to every sample object. We could also start at the merged object we made from the standard pipeline and split the objects by *sample_id*.  
+
+**DO NOT RUN THIS PART!!!**  
+I have already run this integration pipeline for you, so you do not have to. It takes a lot of processing power and memory storage that I had to run this pipeline on the HPC. I have provided the integrated object here (**beware it's a 3GB object**):  
+
+```{r}
+# load Seurat integrated object
+integrate <- readRDS('D:/scRNA-seq pipeline/pasca_dataset/cds_pasca_example_integrated_ob_032422.rds')
+
+```
+
+------------------------------------------------------------------------
+
+### Split Merged Object by Batch
+
+Splitting the merged object will create a list of objects (like we made at the beginning of the standard pipeline).  
+
+```{r}
+# obs <- SplitObject(merged_ob, split.by = 'sample_id')
+# gc()
+
+```
+
+------------------------------------------------------------------------
+
+### Normalization & Variable Features
+
+Normalization and finding variable features works the same way as in the standard pipeline, but, since we have a list of objects, we will have to do these two steps for each object. The two functions are wrapped in a for loop in the code below:  
+
+```{r, eval=FALSE}
+# for (i in 1:length(obs)) {
+#   obs[[i]] <- NormalizeData(obs[[i]], verbose = F)
+#   obs[[i]] <- FindVariableFeatures(obs[[i]], selection.method = 'vst', nfeatures = 2000, verbose = F)
+# }
+
+```
+
+------------------------------------------------------------------------
+
+### Integration
+
+Done on cluster (give object to people in lab section; don't have to run themselves; requires too much memory)  
+
+The first step of integration is to select the integration features, which are the most variable genes. The function below will pick the top 2000 genes that intersect among all the sample objects as the integration features by default:  
+
+```{r}
+# find integration features/genes
+# ?SelectIntegrationFeatures
+# genes <- SelectIntegrationFeatures(obs)
+
+```
+
+<br>
+The second step of integration is to find integration anchors. These anchors will be used to align the objects. It will find anchors by doing pairwise comparisons between objects. We can use the function below:  
+
+```{r}
+# find anchors 
+# ?FindIntegrationAnchors
+# anchors <- FindIntegrationAnchors(object.list = obs, dims = 1:50)
+# gc()
+
+```
+
+The output of the *FindIntegrationAnchors()* function is an AnchorSet object. For this example, I used CCA as the reduction, which works well with smaller datasets. If you have a large dataset, it is advised to use RPCA as the reduction.   
+
+<br>
+The third step is to integrate the objects together with the anchors we found above. In order to include all the genes (not just the 2000 integration features) in the final integrated object, we will specify that we want all intersection of the genes from each separated object while integrating. We can use the code below:  
+
+```{r}
+# find the intersection of genes among objects
+# all_genes <- lapply(obs, rownames) %>% Reduce(intersect, .)
+
+```
+
+```{r}
+# integrate objects
+# ?IntegrateData
+# integrate <- IntegrateData(anchorset = anchors, dims = 1:50, features.to.integrate = all_genes)
+# gc()
+
+
+```
+
+<br>
+The output of the *IntegrateData()* function is a new Seurat object containing a *RNA* and *integrated* assay slot.   
+
+```{r}
+# change assay to integrated slot
+# DefaultAssay(integrate) <- 'integrated'
+
+# Save integrated object
+# saveRDS(integrate, 'cds_pasca_example_integrated_ob_010722.rds')
+
+```
+
+------------------------------------------------------------------------
+
+### Scaling
+
+Scaling with the integrated assay is the same as in the standard pipeline. We will be using the top 2000 variable genes and also regress on *nCount*.  
+
+```{r}
+# run scaling
+# integrate <- ScaleData(integrate, vars.to.regress = c('nCount_RNA'), verbose = F)
+
+```
+
+------------------------------------------------------------------------
+
+### Linear Dimension Reduction - PCA
+
+PCA with the integrated assay is the same as in the standard pipeline. We will still be using the top 2000 variable genes and look at the PCs qualitatively and quantitatively.  
+
+```{r}
+# run PCA
+# integrate <- RunPCA(object = integrate, features = VariableFeatures(object = integrate), nfeatures.print = 5, reduction.name = 'pca_integrated', reduction.key = 'intPCA_', verbose = F)
+
+# qualitative
+## elbow plot
+# ElbowPlot(object = integrate, ndims = 50, reduction = 'pca_integrated')
+
+## save elbow plot
+# png('cds_pasca_example_integrate_qc_elbowplot.png', width = 700, height = 700)
+# print(ElbowPlot(object = integrate, ndims = 50, reduction = 'pca_integrated'))
+# dev.off()
+
+# quantitative
+# pct <- integrate@reductions$pca_integrated@stdev / sum(integrate@reductions$pca_integrated@stdev) * 100 
+# cum <- cumsum(pct) 
+# co1 <- which(cum > 90 & pct < 5)[1] 
+# co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > .1), decreasing = T)[1] + 1
+# pcs <- min(co1, co2) # pcs = 18
+
+# PCA plot (with sample_id)
+# DimPlot(integrate, reduction = 'pca_integrated', group.by = 'sample_id')
+
+# save plot
+# png('cds_pasca_example_integrate_qc_pca_run_id.png', width = 700, height = 700)
+# print(DimPlot(integrate, reduction = 'pca_integrated', group.by = 'sample_id'))
+# dev.off()
+
+```
+
+------------------------------------------------------------------------
+
+### Clustering
+
+Clustering with the integrated assay is the same as in the standard pipeline. We will be using the PCs from PCA and a resolution of 0.8. Be sure to specify the correct reduction!  
+
+```{r}
+# find neighbors
+# integrate <- FindNeighbors(integrate, reduction = 'pca_integrated', dims = 1:pcs, k.param = 20, verbose = F)
+
+# find clusters
+# integrate <- FindClusters(integrate, resolution = 0.5, verbose = F)
+
+# look at how many clusters we get 
+# head(Idents(integrate), 5)
+
+# store clusters in metadata slot
+# integrate$integrate_clusters <- Idents(integrate)
+
+```
+
+------------------------------------------------------------------------
+
+### Non-Linear Dimension Reduction - UMAP
+
+UMAP with the integrated assay is the same as in the standard pipeline. We will be using the results from PCA. Be sure that you are using the correct reduction and cluster #s.  
+
+```{r}
+# run UMAP
+# integrate <- RunUMAP(integrate, dims = 1:pcs, reduction = 'pca_integrated', reduction.name = 'umap_integrated', reduction.key = 'intUMAP_', verbose = F)
+```
+
+```{r}
+# save plots
+# png('cds_pasca_example_integrate_umap.png', width = 700, height = 700)
+# print(DimPlot(integrate, reduction = 'umap_integrated', group.by = 'integrate_clusters'))
+# dev.off()
+# 
+# pdf('cds_pasca_example_integrate_umap.pdf', width = 7, height = 7)
+# print(DimPlot(integrate, reduction = 'umap_integrated', group.by = 'integrate_clusters'))
+# dev.off()
+
+```
+
+------------------------------------------------------------------------
+
+### Save Object (Seurat integrated)
+```{r}
+# remove normalized and scaled data matrices
+## this is just to reduce memory
+# integrate@assays$integrated@data <- matrix()
+# integrate@assays$integrated@scale.data <- matrix()
+
+# save integrated object
+# saveRDS(integrate, 'cds_pasca_example_integrate_umap_no_data_scale_011222.rds')
+
+```
+
+<br>
+
+Let's look at the finished integrated object we loaded in at the start of the Seurat integration pipeline.  
+
+```{r fig.height=5, fig.width=7}
+# plot UMAP (with integrate_clusters)
+DimPlot(integrate, reduction = 'umap_integrated', group.by = 'integrate_clusters')
+
+```
+
+```{r fig.height=5, fig.width=7}
+# plot UMAP (with integrate_clusters and labeled)
+DimPlot(integrate, reduction = 'umap_integrated', group.by = 'integrate_clusters', label = T)
+
+```
+
+<br>
+
+To check if integration went well, we can add *sample_id* to the *group.by* parameter. As we can see, the samples are all mixed together well within each cluster.  
+
+```{r fig.height=5, fig.width=10}
+# plot UMAP (with integrate_clusters and sample_id)
+DimPlot(integrate, reduction = 'umap_integrated', group.by = c('integrate_clusters', 'sample_id'))
+
+```
+
+<br>
+
+Even though we won't be using clusters from Seurat integration for the rest of the workshop, the cell annotation and additional downstream analyses will work the same as if we used harmony clusters.  
+
+------------------------------------------------------------------------
+
+### DE
+
+To do DE with the integrated clusters, you will need to switch to the *RNA* assay, which contains non-integrated values.   
+
+**DO NOT USE INTEGRATED VALUES FOR DE!!**  
+
+```{r}
+# DO NOT RUN
+
+# change active/default assay to 'RNA'
+# DefaultAssay(integrate) <- 'RNA'
+
+# run DE
+# de <- FindAllMarkers(integrate)
+
+# save DE table
+# write_csv(de, 'tables/cds_pasca_example_integrate_clusters_de_032422.csv')
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Conserved Markers
+
+Conserved markers analysis is like DE, but we are trying to find similar/conserved DE genes among groups/batches. We will be using the harmony clusters (object with Harmony).  
+
+We can use the code below:  
+
+```{r}
+# set active identity to 'harmony_clusters'
+Idents(merged_ob) <- 'harmony_clusters'
+
+# run conserved markers analysis on cluster 0 among sample_id
+cm_cluster0 <- FindConservedMarkers(merged_ob, ident.1 = 0, grouping.var = 'sample_id')
+cm_cluster0 <- cm_cluster0 %>% rownames_to_column('gene')
+head(cm_cluster0)
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Session Info
+
+```{r}
+sessionInfo()
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>

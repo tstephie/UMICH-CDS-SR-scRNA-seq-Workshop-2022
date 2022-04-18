@@ -1,0 +1,1121 @@
+---
+title: "CDS scRNA-seq Workshop 2022 Section 2 - Standard Pipeline"
+author: "Stephanie The"
+date: '2022-04-06'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+editor_options: 
+  markdown: 
+    wrap: 72
+  chunk_output_type: console
+---
+
+# Packages
+
+**If you are starting a new session, you will need to reload the
+packages and run the code below:**
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(RColorBrewer)
+library(scales)
+library(cowplot)
+library(patchwork)
+library(grid)
+library(gridExtra)
+library(harmony)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ReactomePA)
+library(msigdbr)
+
+```
+
+```{r}
+# set seed
+set.seed(1383)
+
+# set working directory 
+setwd('D:/scRNA-seq pipeline/pasca_dataset/')
+
+# import metadata
+metadata <- read_csv('data/metadata.csv')
+
+# load raw objects
+obs <- readRDS('pasca_raw_objects.rds')
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# QC
+
+QC is very important because you need to filter out low-quality cells,
+such as:
+
+-   dead cells
+-   empty cells
+-   doublets/multiplets
+
+Remember we all ready did some filtering when creating objects for each
+sample. This is with *min.cells* and *min.features*.
+
+    CreateSeuratObject(counts, project = 'pasca', min.cells = 3, min.features = 100)
+
+For this main QC part, we will be filtering cells based on these 4
+variables:
+
+-   **nCount** (nCount_RNA) = \# of transcripts per cell
+-   **nFeature** (nFeature_RNA) = \# of genes detected per cell
+-   **percent.mt** = % mitochondrial genes detected per cell
+-   **percent.rb** = % ribosomal genes detected per cell
+
+------------------------------------------------------------------------
+
+## Calculate mitocondrial and ribosomal reads
+
+Before we filter, we need to calculate *percent.mt* and *percent.rb*
+variables. We can either find these genes with a regex pattern or put in
+a gene list.
+
+Gene names between human and mouse are different.
+
+For human:
+
+-   mitochondrial genes = '\^MT-'
+-   ribosomal genes = '\^RP[SL]'
+
+For mouse:
+
+-   mitochondrial genes = '\^mt-'
+-   ribosomal genes = '\^Rp[sl]'
+
+```{r}
+# calculate percentage of a gene set
+# ?PercentageFeatureSet
+
+# with regex pattern
+head(PercentageFeatureSet(object = obs[[1]], pattern = '^MT-'))
+
+# with gene list
+gene_list <- rownames(obs[[1]])[grep('^MT-',rownames(obs[[1]]))]
+head(PercentageFeatureSet(object = obs[[1]], features = gene_list))
+
+```
+
+<br>
+
+Let's now calculate *percent.mt* and *percent.rb* for every sample
+object. These variables will then be stored in the metadata slot in each
+object.
+
+```{r}
+# calculate mitochondria and ribosomal reads for each cell in each object
+for (i in 1:length(obs)) {
+  obs[[i]]$percent.mt <- PercentageFeatureSet(obs[[i]], pattern = "^MT-")
+  obs[[i]]$percent.rb <- PercentageFeatureSet(obs[[i]], pattern = '^RP[SL]')
+}
+
+# percentages for mt and rb are stored in metadata slot for each object
+head(obs[[1]]@meta.data)
+
+```
+
+------------------------------------------------------------------------
+
+## One Sample QC
+
+Now we can do QC and filtering. To make it simple at first, let's do it
+on one sample. We will be using the *AdjNorm_TISSUE_1* sample for this
+example. This is *obs[[1]]* in our list of objects.
+
+------------------------------------------------------------------------
+
+### Before Filtering
+
+The first step is to look at violin and scatter plots of the 4 QC
+variables.
+
+-   violin plot = looking at variables individually
+
+```{r}
+# ?VlnPlot
+```
+
+-   scatter plot = looking at combination of 2 variables
+
+```{r}
+# ?FeaturePlot
+```
+
+<br>
+
+Remember, we want to get the cells that represent the majority of the
+distribution.
+
+```{r}
+# plot violin plot of QC variables AdjNorm_TISSUE_1 sample QC
+VlnPlot(obs[[1]], features = c("nCount_RNA","nFeature_RNA", "percent.mt", "percent.rb"), ncol = 4, pt.size = .5)
+
+```
+
+```{r fig.height=7, fig.width=9}
+# plot feature scatter plot of QC variables for AdjNorm_TISSUE_1 sample QC
+plot1 <- FeatureScatter(object = obs[[1]], feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(object = obs[[1]], feature1 = "nCount_RNA", feature2 = "percent.rb")
+plot3 <- FeatureScatter(object = obs[[1]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot4 <- FeatureScatter(object = obs[[1]], feature1 = "percent.mt", feature2 = "percent.rb")
+wrap_plots(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2)
+
+```
+
+<br>
+
+I normally save the QC plots for transparency, and they can be included
+in articles if needed. Here is an example of how to save plots (either
+png or pdf):
+
+```{r}
+# how to save plots
+## DO NOT RUN
+
+## png file
+# png(filename = 'vlnplot.png', width = 500, height = 500)
+# print(VlnPlot(obs[[1]], features = c("nCount_RNA","nFeature_RNA", "percent.mt", "percent.rb"), ncol = 4, pt.size = .5))
+# dev.off()
+
+## pdf file
+# pdf(file = 'vlnplot.pdf', width = 5, height = 5)
+# print(VlnPlot(obs[[1]], features = c("nCount_RNA","nFeature_RNA", "percent.mt", "percent.rb"), ncol = 4, pt.size = .5))
+# dev.off()
+
+```
+
+------------------------------------------------------------------------
+
+### Picking Thresholds
+
+The second step is to pick the thresholds for all 4 QC variables. There
+will be a low threshold and high threshold. The cells in the range of
+these thresholds will be kept, and cells outside will be filtered out.
+**For the high threshold, overestimating it is fine.** You don't want to
+filter out too many cells.
+
+```{r}
+# get range of QC variables AdjNorm_TISSUE_1 sample QC
+## this will give you the min and max of the current variables
+nCount_RNA_range <- range(obs[[1]]$nCount_RNA)
+nFeature_RNA_range <- range(obs[[1]]$nFeature_RNA)
+percent.mt_range <- range(obs[[1]]$percent.mt)
+percent.rb_range <- range(obs[[1]]$percent.rb)
+
+nCount_RNA_range
+
+# fill in list of filtering thresholds for each QC variable
+## each vector in list should contain 2 values (low threshold, high threshold)
+vln_y_line <- list(
+  nCount_RNA = c(nCount_RNA_range[1],3e5), 
+  nFeature_RNA = c(nFeature_RNA_range[1], 8000), 
+  percent.mt = c(percent.mt_range[1],20), 
+  percent.rb = c(percent.rb_range[1],percent.rb_range[2])
+)
+
+vln_y_line
+
+```
+
+<br>
+
+The third step is to check that the thresholds look good with plots. We
+will add threshold lines to show where we am filtering. I do this step
+to make sure I didn't mistype any values or if I want to change the
+threshold before actually filtering.
+
+```{r fig.height=7, fig.width=7}
+# violin plots with threshold lines
+plot1 <- VlnPlot(obs[[1]], features = c("nCount_RNA"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[1]][1], vln_y_line[[1]][2])) & theme(legend.position = 'none')
+plot2 <- VlnPlot(obs[[1]], features = c("nFeature_RNA"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[2]][1], vln_y_line[[2]][2])) & theme(legend.position = 'none')
+plot3 <- VlnPlot(obs[[1]], features = c("percent.mt"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[3]][1], vln_y_line[[3]][2])) & theme(legend.position = 'none')
+plot4 <- VlnPlot(obs[[1]], features = c("percent.rb"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[4]][1], vln_y_line[[4]][2])) & theme(legend.position = 'none')
+
+wrap_plots(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2)
+
+```
+
+```{r fig.height=7, fig.width=9}
+# feature scatter plots with threshold lines
+plot1 <- FeatureScatter(object = obs[[1]], feature1 = "nCount_RNA", feature2 = "percent.mt") + geom_hline(yintercept = c(vln_y_line[[3]][1], vln_y_line[[3]][2])) + geom_vline(xintercept = c(vln_y_line[[1]][1], vln_y_line[[1]][2])) + theme(legend.position = 'none')
+plot2 <- FeatureScatter(object = obs[[1]], feature1 = "nCount_RNA", feature2 = "percent.rb") & geom_hline(yintercept = c(vln_y_line[[4]][1], vln_y_line[[4]][2])) & geom_vline(xintercept = c(vln_y_line[[1]][1], vln_y_line[[1]][2])) & theme(legend.position = 'none')
+plot3 <- FeatureScatter(object = obs[[1]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA") & geom_hline(yintercept = c(vln_y_line[[2]][1], vln_y_line[[2]][2])) & geom_vline(xintercept = c(vln_y_line[[1]][1], vln_y_line[[1]][2])) & theme(legend.position = 'none')
+plot4 <- FeatureScatter(object = obs[[1]], feature1 = "percent.mt", feature2 = "percent.rb") & geom_hline(yintercept = c(vln_y_line[[4]][1], vln_y_line[[4]][2])) & geom_vline(xintercept = c(vln_y_line[[3]][1], vln_y_line[[3]][2])) & theme(legend.position = 'none')
+
+plot1 + plot2 + plot3 + plot4
+
+```
+
+------------------------------------------------------------------------
+
+### Filtering
+
+The fourth step is to actually filter with the thresholds we have
+chosen. We will be using this function:
+
+```{r}
+# ?subset
+
+obs[[1]] <- subset(obs[[1]], subset = 
+                     (nCount_RNA >= vln_y_line[[1]][1] & 
+                        nCount_RNA <= vln_y_line[[1]][2]) & 
+                     (nFeature_RNA >= vln_y_line[[2]][1] & 
+                        nFeature_RNA <= vln_y_line[[2]][2]) & 
+                     (percent.mt >= vln_y_line[[3]][1] & 
+                        percent.mt <= vln_y_line[[3]][2]) & 
+                     (percent.rb >= vln_y_line[[4]][1] & 
+                        percent.rb <= vln_y_line[[4]][2])
+              )
+
+```
+
+<br>
+
+You don't actually have to specify all the thresholds when
+filtering/subsetting. In this sample, we only filtered on *nCount*,
+*nFeature*, and *percent.mt*, so we don't have to include *percent.rb*
+in the function. Also, we didn't set any new low thresholds, so we don't
+have to specify those thresholds either.
+
+The code will look like this:
+
+```{r}
+## DO NOT RUN
+# obs[[1]] <- subset(obs[[1]], subset = nCount_RNA <= 3e5 & nFeature_RNA <= 8000 & percent.mt <= 20)
+```
+
+I have only included all the thresholds (low and high) for automated
+processing reasons. You will see this later on in the script when we
+filter all sample objects at once.
+
+------------------------------------------------------------------------
+
+### After Filtering
+
+The fifth step is to check that filtering worked and it looks good with
+plots. If you did mess up, you can go back to the raw objects by
+reloading the ["pasca_raw_objects.rds"]{.underline} file.
+
+```{r}
+VlnPlot(obs[[1]], features = c("nCount_RNA", "nFeature_RNA", "percent.mt", "percent.rb"), ncol = 4, pt.size = .5)
+
+```
+
+```{r fig.height=7, fig.width=9}
+plot1 <- FeatureScatter(object = obs[[1]], feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(object = obs[[1]], feature1 = "nCount_RNA", feature2 = "percent.rb")
+plot3 <- FeatureScatter(object = obs[[1]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot4 <- FeatureScatter(object = obs[[1]], feature1 = "percent.mt", feature2 = "percent.rb")
+wrap_plots(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2)
+
+```
+
+------------------------------------------------------------------------
+
+## All Samples QC
+
+We will now filter all the samples at once. This code is specialized to
+filter on each sample object to make it automated. This helps with
+making the code clean by reducing duplicated code. The difference for
+this specialized code for all samples is that the main functions are
+wrapped around in loops. Also, it automatically saves plots as png files
+outside of R.
+
+We will reload the raw objects, but we will keep the thresholds we found
+above for the first sample.
+
+```{r, eval=FALSE}
+# load raw objects again
+obs <- readRDS('D:/scRNA-seq pipeline/pasca_dataset/pasca_raw_objects.rds')
+
+```
+
+------------------------------------------------------------------------
+
+### Calculate mitocondrial and ribosomal reads
+
+```{r}
+# calculate mitochondria and ribosomal reads for each cell in each object
+for (i in 1:length(obs)) {
+  obs[[i]]$percent.mt <- PercentageFeatureSet(obs[[i]], pattern = "^MT-")
+  obs[[i]]$percent.rb <- PercentageFeatureSet(obs[[i]], pattern = '^RP[SL]')
+}
+
+```
+
+------------------------------------------------------------------------
+
+### Before Filtering
+
+```{r}
+# export no line plots
+# DO NOT RUN
+# for (i in 1:length(obs)) {
+#   # vlnplot (no lines)
+#   file_name_1 <- paste0('plots/qc/qc_vln_before_',metadata$sample_id[i],'.png')
+#   png(filename = file_name_1, width = 500, height = 500)
+#   print(VlnPlot(obs[[i]], features = c("nCount_RNA", "nFeature_RNA", "percent.mt", "percent.rb"), ncol = 4, pt.size = .5))
+#   dev.off()
+#   
+#   # feature scatter (no lines)
+#   file_name_2 <- paste0('plots/qc/qc_featurescatter_before_',metadata$sample_id[i],'.png')
+#   plot1 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.mt")
+#   plot2 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.rb")
+#   plot3 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+#   plot4 <- FeatureScatter(object = obs[[i]], feature1 = "percent.mt", feature2 = "percent.rb")
+#   png(filename = file_name_2, width = 800, height = 800)
+#   print(wrap_plots(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2))
+#   dev.off()
+# 
+# }
+
+```
+
+------------------------------------------------------------------------
+
+### Exercise: Picking Thresholds
+
+Choose the thresholds for the other 5 samples:
+
+-   AdjNorm_TISSUE_2
+-   AdjNorm_TISSUE_3
+-   PDAC_TISSUE_1
+-   PDAC_TISSUE_2
+-   PDAC_TISSUE_3
+
+We already did *AdjNorm_TISSUE_1* together, so don't change those
+values!
+
+Make sure you include a low and high threshold in every vector for each
+variable for each sample (otherwise you'll get an error). Since we
+aren't setting a low threshold, please don't change the first element of
+each vector. Also, don't worry about filtering on *percent.rb*. Please
+don't change those values in any sample.
+
+ex: nCount_RNA = c(nCount_RNA_range[[1]][1],{high threshold})
+
+**The elements/values you can change will have [{val}]{.underline} as a
+placeholder.**
+
+You can check your thresholds with the plots. You will have to run the
+whole for loop to save and see the plots outside of R.
+
+```{r}
+# get range of QC variables for each sample object
+## this will give you the min and max of the current variables
+nCount_RNA_range <- sapply(obs, function(x) list(range(x$nCount_RNA)))
+nFeature_RNA_range <- sapply(obs, function(x) list(range(x$nFeature_RNA)))
+percent.mt_range <- sapply(obs, function(x) list(range(x$percent.mt)))
+percent.rb_range <- sapply(obs, function(x) list(range(x$percent.rb)))
+
+```
+
+```{r, eval=FALSE}
+vln_y_line <- list(
+
+  # AdjNorm_TISSUE_1
+  list(nCount_RNA = c(nCount_RNA_range[[1]][1],3e5),
+       nFeature_RNA = c(nFeature_RNA_range[[1]][1], 8000),
+       percent.mt = c(percent.mt_range[[1]][1],20),
+       percent.rb = c(percent.rb_range[[1]][1],percent.rb_range[[1]][2])),
+
+  # AdjNorm_TISSUE_2
+  list(nCount_RNA = c(nCount_RNA_range[[2]][1],'{val}'),
+       nFeature_RNA = c(nFeature_RNA_range[[2]][1], '{val}'),
+       percent.mt = c(percent.mt_range[[2]][1],'{val}'),
+       percent.rb = c(percent.rb_range[[2]][1],percent.rb_range[[2]][2])),
+
+  # AdjNorm_TISSUE_3
+  list(nCount_RNA = c(nCount_RNA_range[[3]][1],'{val}'),
+       nFeature_RNA = c(nFeature_RNA_range[[3]][1], '{val}'),
+       percent.mt = c(percent.mt_range[[3]][1],'{val}'),
+       percent.rb = c(percent.rb_range[[3]][1],percent.rb_range[[3]][2])),
+
+  # PDAC_TISSUE_1
+  list(nCount_RNA = c(nCount_RNA_range[[4]][1],'{val}'),
+       nFeature_RNA = c(nFeature_RNA_range[[4]][1], '{val}'),
+       percent.mt = c(percent.mt_range[[4]][1],'{val}'),
+       percent.rb = c(percent.rb_range[[4]][1],percent.rb_range[[4]][2])),
+
+  # PDAC_TISSUE_2
+  list(nCount_RNA = c(nCount_RNA_range[[5]][1],'{val}'),
+       nFeature_RNA = c(nFeature_RNA_range[[5]][1], '{val}'),
+       percent.mt = c(percent.mt_range[[5]][1],'{val}'),
+       percent.rb = c(percent.rb_range[[5]][1],percent.rb_range[[5]][2])),
+
+  # PDAC_TISSUE_3
+  list(nCount_RNA = c(nCount_RNA_range[[6]][1],'{val}'),
+       nFeature_RNA = c(nFeature_RNA_range[[6]][1],'{val}'),
+       percent.mt = c(percent.mt_range[[6]][1],'{val}'),
+       percent.rb = c(percent.rb_range[[6]][1],percent.rb_range[[6]][2]))
+)
+
+```
+
+```{r}
+# exporting line plots
+# DO NOT RUN
+# for (i in 1:length(obs)) {
+#   # vlnplot (lines)
+#   file_name_1 <- paste0('plots/qc/qc_vln_before_line_',metadata$sample_id[i],'.png')
+#   plot1 <- VlnPlot(obs[[i]], features = c("nCount_RNA"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[i]][[1]][1], vln_y_line[[i]][[1]][2])) & theme(legend.position = 'none')
+#   plot2 <- VlnPlot(obs[[i]], features = c("nFeature_RNA"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[i]][[2]][1], vln_y_line[[i]][[2]][2])) & theme(legend.position = 'none')
+#   plot3 <- VlnPlot(obs[[i]], features = c("percent.mt"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[i]][[3]][1], vln_y_line[[i]][[3]][2])) & theme(legend.position = 'none')
+#   plot4 <- VlnPlot(obs[[i]], features = c("percent.rb"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[i]][[4]][1], vln_y_line[[i]][[4]][2])) & theme(legend.position = 'none')
+#   
+#   png(filename = file_name_1, width = 500, height = 500)
+#   print(wrap_plots(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2))
+#   dev.off()
+#   
+#   # feature scatter (lines)
+#   file_name_2 <- paste0('plots/qc/qc_featurescatter_before_line_',metadata$sample_id[i],'.png')
+#   plot1 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.mt") + geom_hline(yintercept = c(vln_y_line[[i]][[3]][1], vln_y_line[[i]][[3]][2])) + geom_vline(xintercept = c(vln_y_line[[i]][[1]][1], vln_y_line[[i]][[1]][2])) + theme(legend.position = 'none')
+#   plot2 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.rb") & geom_hline(yintercept = c(vln_y_line[[i]][[4]][1], vln_y_line[[i]][[4]][2])) & geom_vline(xintercept = c(vln_y_line[[i]][[1]][1], vln_y_line[[i]][[1]][2])) & theme(legend.position = 'none')
+#   plot3 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA") & geom_hline(yintercept = c(vln_y_line[[i]][[2]][1], vln_y_line[[i]][[2]][2])) & geom_vline(xintercept = c(vln_y_line[[i]][[1]][1], vln_y_line[[i]][[1]][2])) & theme(legend.position = 'none')
+#   plot4 <- FeatureScatter(object = obs[[i]], feature1 = "percent.mt", feature2 = "percent.rb") & geom_hline(yintercept = c(vln_y_line[[i]][[4]][1], vln_y_line[[i]][[4]][2])) & geom_vline(xintercept = c(vln_y_line[[i]][[3]][1], vln_y_line[[i]][[3]][2])) & theme(legend.position = 'none')
+# 
+#   png(filename = file_name_2, width = 800, height = 800)
+#   print(plot1 + plot2 + plot3 + plot4)
+#   dev.off() 
+# }
+
+```
+
+#### Answers
+```{r, echo=FALSE}
+vln_y_line <- list(
+  
+  # AdjNorm_TISSUE_1
+  list(nCount_RNA = c(nCount_RNA_range[[1]][1],3e5), nFeature_RNA = c(nFeature_RNA_range[[1]][1], 8000), 
+       percent.mt = c(percent.mt_range[[1]][1],20), percent.rb = c(percent.rb_range[[1]][1],percent.rb_range[[1]][2])),
+  
+  # AdjNorm_TISSUE_2
+  list(nCount_RNA = c(nCount_RNA_range[[2]][1],3e5), nFeature_RNA = c(nFeature_RNA_range[[2]][1], 8000), 
+       percent.mt = c(percent.mt_range[[2]][1],25), percent.rb = c(percent.rb_range[[2]][1],percent.rb_range[[2]][2])),
+  
+  # AdjNorm_TISSUE_3
+  list(nCount_RNA = c(nCount_RNA_range[[3]][1],2e5), nFeature_RNA = c(nFeature_RNA_range[[3]][1], 7500), 
+       percent.mt = c(percent.mt_range[[3]][1],20), percent.rb = c(percent.rb_range[[3]][1],percent.rb_range[[3]][2])),
+  
+  # PDAC_TISSUE_1
+  list(nCount_RNA = c(nCount_RNA_range[[4]][1],1.5e5), nFeature_RNA = c(nFeature_RNA_range[[4]][1], 9000), 
+       percent.mt = c(percent.mt_range[[4]][1],20), percent.rb = c(percent.rb_range[[4]][1],percent.rb_range[[4]][2])),
+  
+  # PDAC_TISSUE_2
+  list(nCount_RNA = c(nCount_RNA_range[[5]][1],6e4), nFeature_RNA = c(nFeature_RNA_range[[5]][1], 7500), 
+       percent.mt = c(percent.mt_range[[5]][1],20), percent.rb = c(percent.rb_range[[5]][1],percent.rb_range[[5]][2])),
+  
+  # PDAC_TISSUE_3
+  list(nCount_RNA = c(nCount_RNA_range[[6]][1],1e5), nFeature_RNA = c(nFeature_RNA_range[[6]][1], 9000), 
+       percent.mt = c(percent.mt_range[[6]][1],25), percent.rb = c(percent.rb_range[[6]][1],percent.rb_range[[6]][2]))
+)
+
+```
+
+------------------------------------------------------------------------
+
+### Filtering
+
+```{r}
+for (i in 1:length(obs)) {
+  obs[[i]] <- subset(obs[[i]], subset = (nCount_RNA >= vln_y_line[[i]][[1]][1] & nCount_RNA <= vln_y_line[[i]][[1]][2]) & (nFeature_RNA >= vln_y_line[[i]][[2]][1] & nFeature_RNA <= vln_y_line[[i]][[2]][2]) & (percent.mt >= vln_y_line[[i]][[3]][1] & percent.mt <= vln_y_line[[i]][[3]][2]) & (percent.rb >= vln_y_line[[i]][[4]][1] & percent.rb <= vln_y_line[[i]][[4]][2]))
+}
+
+```
+
+------------------------------------------------------------------------
+
+### After Filtering
+
+```{r}
+# export no line plots
+# DO NOT RUN
+# for (i in 1:length(obs)) {
+#   # vlnplot (no lines)
+#   file_name_1 <- paste0('plots/qc/qc_vln_after_',metadata$sample_id[i],'.png')
+#   png(filename = file_name_1, width = 500, height = 500)
+#   print(VlnPlot(obs[[i]], features = c("nCount_RNA", "nFeature_RNA", "percent.mt", "percent.rb"), ncol = 4, pt.size = .5))
+#   dev.off()
+#   
+#   # feature scatter (no lines)
+#   file_name_2 <- paste0('plots/qc/qc_featurescatter_after_',metadata$sample_id[i],'.png')
+#   plot1 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.mt")
+#   plot2 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.rb")
+#   plot3 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+#   plot4 <- FeatureScatter(object = obs[[i]], feature1 = "percent.mt", feature2 = "percent.rb")
+#   png(filename = file_name_2, width = 800, height = 800)
+#   print(wrap_plots(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2))
+#   dev.off()
+# 
+# }
+
+```
+
+------------------------------------------------------------------------
+
+## Look at number of cells after QC filtering
+
+We can check the new \# of cells in each sample object with the code
+below. This is a good sanity check to make sure filtering went well.
+
+```{r}
+cat('Total # of cells per object/sample \n\n')
+unlist(sapply(obs, function(x) ncol(x)))
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Unbatched Analysis
+
+Before considering integration, I like to analyze my dataset ignoring
+batch effect first even if I know that it has a batch effect. I mainly
+do this so I can for sure check to make sure what my batch variable(s)
+is. It also allows for transparency that serves as proof that you have a
+batch effect and that it was corrected for in the main figures in your
+articles.
+
+------------------------------------------------------------------------
+
+## Merge objects
+
+Since our objects are separated by sample, we will have to merge the
+objects together before we can do the rest of the standard pipeline. We
+will go over the integration pipeline later on.
+
+```{r}
+# long format
+## DO NOT RUN
+# merged_ob <- merge(x = obs[[1]], y = c(obs[[2]], obs[[3]], obs[[4]], obs[[5]], obs[[6]]), add.cell.ids = metadata$sample_id)
+
+# short, cleaner format
+## need to include add.cell.ids (adds sample name to barcode name)
+more_obs <- paste0("c(",paste(sapply(2:length(obs),function(i) paste0("obs[[",i,"]]")),collapse=",",sep=""),")")
+merged_ob <- merge(obs[[1]], eval(parse(text=more_obs)), add.cell.ids = metadata$sample_id)
+
+# cell names before merge
+head(colnames(obs[[1]]))
+
+# cell names after merge
+head(colnames(merged_ob))
+
+```
+
+```{r, message=FALSE, warning=FALSE}
+# remove separated sample objects (don't need them anymore)
+rm(obs)
+gc()
+
+```
+
+------------------------------------------------------------------------
+
+## Normalization
+
+Normalization transforms the distribution of the data, which, in this
+scRNA-seq analysis, it transform the data into a more normal
+distribution. Normalization helps to reduce unwanted variation, compare
+among samples better, and make the values easier to see (can see
+differences better).
+
+We will use this function:
+
+```{r}
+# run normalization
+# ?NormalizeData
+merged_ob <- NormalizeData(merged_ob)
+
+```
+
+------------------------------------------------------------------------
+
+## Find Variable Features
+
+We have over 10,000 genes in this dataset. We want to find the genes
+that will give us the most information without using all of the genes.
+These genes will have the most variance (aka the most variable).
+
+We will use this function to find the most variable genes:
+
+```{r}
+# find most variable genes
+# ?FindVariableFeatures
+merged_ob <- FindVariableFeatures(merged_ob)
+
+```
+
+We will choose the top 2000 genes for this example. You can change the
+\# of variable genes, and this will change the results. When choosing
+the \# of variable genes, overestimating is usually better than
+underestimating.
+
+<br>
+
+We can look at our variable genes with this function:
+
+```{r fig.height=5, fig.width=12}
+# Scatter plot of average expression and standardized variance 
+## each dot is a gene
+
+top10_list <- head(VariableFeatures(merged_ob), 10)
+p1 <- VariableFeaturePlot(merged_ob)
+p2 <- LabelPoints(plot = p1, points = top10_list)
+
+p1 + p2
+
+```
+
+------------------------------------------------------------------------
+
+## Check Cell Cycle Batch
+
+Cell cycle can affect the results, so we need to do QC on it. We will be
+looking at the G1, S, and G2/M phases.
+
+For human, you can find a curated list of cell cycle genes in Seurat
+with the code below. For mouse, you will have to find or make a cell
+cycle gene list.
+
+```{r}
+# human cc genes found in Seurat
+## might not find all of these genes in dataset (might give warning about that)
+cc_genes <- cc.genes.updated.2019
+
+```
+
+<br>
+
+To check cell cycle QC, we can run the code below:
+
+```{r fig.height=5, fig.width=5}
+# calculate scores
+# ?CellCycleScoring
+merged_ob <- CellCycleScoring(merged_ob, s.features = cc_genes$s.genes, g2m.features = cc_genes$g2m.genes, set.ident = TRUE)
+
+# scale data on cc genes
+merged_ob <- ScaleData(merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes), verbose = F)
+
+# run PCA on cc genes
+merged_ob <- RunPCA(merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes), 
+                    nfeatures.print = 5, reduction.name = 'cc_pca', verbose = F)
+
+# plot PCA of cc phases
+DimPlot(merged_ob, reduction = 'cc_pca', group.by = 'Phase')
+
+```
+
+<br>
+
+If you decide to correct for cell cycle, we can check how it's corrected
+with the codes below:
+
+-   Method 1: Regress out all cell cycle effects
+
+```{r fig.height=5, fig.width=5}
+# scale on cc genes and regress on the S and G2/M scores
+merged_ob <- ScaleData(merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes),
+                   vars.to.regress = c('S.Score', 'G2M.Score'), verbose = F) 
+
+# run PCA on fully regressed cc genes
+merged_ob <- RunPCA(object = merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes), 
+                    nfeatures.print = 5, reduction.name = 'cc_pca', verbose = F)
+
+# plot PCA of cc phases
+DimPlot(merged_ob, reduction = 'cc_pca', group.by = 'Phase')
+
+```
+
+-   Method 2: Regress out some cell cycle effects
+
+```{r fig.height=5, fig.width=5}
+# will only see differences between non-cycling (G1) and cycling cells (S and G2/M)
+
+# subtract S and G2/M scores
+merged_ob$CC.Difference <- merged_ob$S.Score - merged_ob$G2M.Score
+
+# scale on cc genes regressing out difference between S and G2/M phases
+merged_ob <- ScaleData(merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes),
+                   vars.to.regress = c("CC.Difference"), verbose = F) 
+
+# run PCA on regressed cc genes
+merged_ob <- RunPCA(object = merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes), 
+                    nfeatures.print = 5, reduction.name = 'cc_pca', verbose = F)
+
+# plot PCA of cc phases
+DimPlot(merged_ob, reduction = 'cc_pca', group.by = 'Phase')
+
+```
+
+------------------------------------------------------------------------
+
+## Scaling
+
+Scaling changes the range of values (not the distribution like
+normalization does). The values are centered around a mean with a unit
+standard deviation. Scaling helps to reduce unwanted variation and is
+required to run PCA in Seurat (otherwise you will get an error).
+
+We will use this function:
+
+```{r}
+# scale data
+# ?ScaleData
+merged_ob <- ScaleData(merged_ob, vars.to.regress = 'nCount_RNA') 
+
+```
+
+We will regress on *nCount* to reduce variation from library preparation
+among cells. You can add more variables like *percent.mt* if you decide
+to. You don't even have to regress on any variable if you don't need it.
+
+<br>
+
+We will only scale on the top 2000 variable genes because it will make
+the processing go a lot faster, and we will not be using the Seurat plot
+functions that require scaled data. Remember that we won't be able to
+find genes outside of the top 2000 variable genes list. Ultimately, we
+will only be using the variable genes to get good clustering and UMAPs.
+
+```{r}
+# genes x cells of scaled data
+dim(merged_ob@assays$RNA@scale.data)
+
+# Is HBA1 in scaled data?
+'HBA1' %in% rownames(merged_ob@assays$RNA@scale.data)
+
+# Is CD4 in scaled data?
+'CD4' %in% rownames(merged_ob@assays$RNA@scale.data)
+
+```
+
+------------------------------------------------------------------------
+
+## Linear Dimension Reduction: PCA
+
+PCA helps to reduce the dimension of the dataset or \# of variables used
+for downstream analyses. In scRNA-seq, dimensions are genes.
+
+We will use this function:
+
+```{r}
+# run PCA
+# ?RunPCA
+merged_ob <- RunPCA(merged_ob, features = VariableFeatures(merged_ob),  nfeatures.print = 5)
+
+```
+
+We will run on the top 2000 variable genes, which is the default in
+Seurat.
+
+<br>
+
+To choose how many PCs to use in downstream analyses, we will look at
+the PCA in two ways:
+
+-   Qualitative method
+
+```{r fig.height=5, fig.width=5}
+# scree/elbow plot
+# ?ElbowPlot
+ElbowPlot(merged_ob, ndims = 50)
+
+```
+
+<br>
+
+We will not do a JackStraw plot because it takes a long time to run (and
+I don't normally use it). However, here is the code for it:
+
+```{r}
+# JackStraw plot
+## DO NOT RUN
+# merged_ob <- JackStraw(merged_ob)
+# merged_ob <- ScoreJackStraw(merged_ob, dims = 1:20)
+# JackStrawPlot(merged_ob, dims = 1:20)
+
+```
+
+-   Quantitative method
+
+```{r}
+# complex method - make range of PCs for high threshold 
+## will choose minimum value of this range
+pct <- merged_ob@reductions$pca@stdev / sum(merged_ob@reductions$pca@stdev) * 100 
+cum <- cumsum(pct) 
+co1 <- which(cum > 90 & pct < 5)[1] 
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > .1), decreasing = T)[1] + 1
+pcs <- min(co1, co2) 
+
+# will use 1-18 PCs for downstream analyses 
+
+```
+
+<br>
+
+This is also a good place to check for potential batch effects.
+
+```{r fig.height=5, fig.width=7}
+# PCA plot (with sample_id)
+DimPlot(merged_ob, reduction = 'pca', group.by = 'sample_id')
+
+```
+
+------------------------------------------------------------------------
+
+## Clustering
+
+Clustering is an unsupervised technique. It divides data points into
+groups with similar traits and assigns them as clusters. In scRNA-seq,
+data points are cells. Seurat uses a graph-based method, and it does it
+in two steps:
+
+1)  Find neighbors using KNN graph
+2)  Find clusters using Louvain algorithm
+
+We will use the code below:
+
+```{r}
+# find neighbors
+# ?FindNeighbors
+## pcs = 18
+merged_ob <- FindNeighbors(merged_ob, dims = 1:pcs, k.param = 20)
+
+```
+
+```{r}
+# find clusters
+# ?FindClusters
+merged_ob <- FindClusters(merged_ob)
+
+```
+
+<br>
+
+We will use the PCA results from above when clustering, which is the
+default in Seurat. We will also use a resolution 0.8, which is the
+default in Seurat. To increase the \# of clusters, you can increase the
+resolution.
+
+```{r}
+# look at how many clusters we get 
+head(Idents(merged_ob), 5)
+
+# store clusters in metadata slot
+merged_ob$clusters <- Idents(merged_ob)
+
+```
+
+------------------------------------------------------------------------
+
+## Non-Linear Dimension Reduction - UMAP
+
+Non-linear dimension reduction methods learn the underlying manifold of
+the data to place similar cells together in a low-dimensional space. The
+main methods used in scRNA-seq are tSNE and UMAP. We will be using UMAP
+for this example. For both methods, we will use the PCs to speed up
+processing.
+
+If you want to run tSNE, the code is below:
+
+```{r}
+## DO NOT RUN
+# ?RunTSNE
+# merged_ob <- RunTSNE(merged_ob, dims = 1:pcs)
+
+```
+
+<br>
+
+Code to run UMAP is below:
+
+```{r}
+# run UMAP
+# ?RunUMAP
+merged_ob <- RunUMAP(merged_ob, dims = 1:pcs)
+
+```
+
+<br>
+
+There are many ways to customize your UMAPs with the DimPlot function.
+The parameters I have shown are not all of them, but there are some
+parameters for changing colors, point size, etc.
+
+```{r fig.height=5, fig.width=7}
+# plot UMAP (with cluster #s)
+# ?DimPlot
+DimPlot(merged_ob, group.by = 'clusters')
+
+```
+
+```{r fig.height=5, fig.width=7}
+# plot UMAP (with cluster #s and labeled)
+DimPlot(merged_ob, group.by = 'clusters', label = T)
+
+```
+
+```{r fig.height=5, fig.width=10}
+# plot UMAP (with cluster #s and split into different plots by condition)
+DimPlot(merged_ob, split.by = 'condition')
+
+```
+
+```{r fig.height=5, fig.width=12}
+# plot different UMAP (with cluster #s, sample ID, and condition)
+DimPlot(merged_ob, group.by = c('clusters', 'sample_id', 'condition'))
+
+```
+
+From these UMAPs plotted by 'clusters', 'sample_id', and 'condition', we
+can see that there are potential batch effect variables. We will choose
+'sample_id' as the main batch effect variable. We could have chosen
+'condition', but 'sample_id' also takes into account 'condition'. We
+will use this batch variable in the integration pipeline.
+
+------------------------------------------------------------------------
+
+## Save Object (Unbatched)
+
+```{r eval=FALSE}
+# save processed object (ignoring batch effect)
+saveRDS(merged_ob, 'pasca_unbatched_umap.rds')
+
+```
+
+------------------------------------------------------------------------
+
+## DE
+
+DE is where you can run comparison tests. The examples shown below do
+not account for batch effect.
+
+------------------------------------------------------------------------
+
+### Finding DE genes for clusters
+
+By doing DE on clusters, we can see what genes makes each cluster
+different from each other. When we are testing, we are comparing one
+cluster to the rest of the cells (ignoring cluster).
+
+We can use the function below to do this:
+
+```{r}
+# ?FindMarkers
+de_unbatch_0 <- FindMarkers(merged_ob, ident.1 = 0)
+
+head(de_unbatch_0)
+
+```
+
+<br>
+
+We can run through all the clusters easily with this function:
+
+```{r}
+# ?FindAllMarkers
+## DO NOT RUN
+# de <- FindAllMarkers(merged_ob)
+
+# save DE table
+## DO NOT RUN
+# write_csv(merged_ob, 'tables/cds_pasca_example_cluster0_de_032222.csv')
+
+```
+
+<br>
+
+Instead of running all the clusters right now, I have run it for you
+because it can take a long time. You can load in the full DE table with the code below:
+
+```{r}
+de <- read_csv('D:/scRNA-seq pipeline/pasca_dataset/tables/cds_pasca_example_cluster0_de_032222.csv')
+
+```
+
+Here are descriptions of the columns in the DE table:
+
+-   **p_val** = p-value (not adjusted)
+-   **avg_log2FC** = log2 fold-change (FC) of average expression between 2
+    groups
+    -   log2(FC1) - log2(FC2)
+    -   Positive (+) value = higher in group 1
+    -   Negative (-) value = lower in group 1
+-   **pct.1/pct.2** = % of cells where gene is expressed in group (1 or 2)
+    -   expressed = normalized expression \> 0
+-   **p_val_adj** = adjusted p-value
+    -   by Bonferroni
+-   **cluster** = name of group compared
+    -   this is group 1
+-   **gene** = name of gene
+
+To find the most important DE genes, we can do the code below:
+
+```{r}
+# filter by adjusted p-value < .05
+## make sure you are looking at significant genes
+de_filt <- de %>% dplyr::filter(p_val_adj < .05)
+
+# sort by average log2FC (most positive to most negative)
+de_filt <- de_filt %>% arrange(-avg_log2FC)
+
+# can condense code and write as:
+## DO NOT RUN
+# de_filt <- de %>% dplyr::filter(p_val_adj < .05) %>% arrange(cluster, -avg_log2FC)
+
+```
+
+------------------------------------------------------------------------
+
+### Finding DE genes between groups
+
+To find DE genes between groups, it's very similar to finding for
+clusters.
+
+```{r}
+# run DE for N vs. P condition
+de_condition <- FindMarkers(merged_ob, ident.1 = 'N', ident.2 = 'P', group.by = 'condition')
+de_condition_filt <- de_condition %>% rownames_to_column('gene') %>% dplyr::filter(p_val_adj < .05) %>% arrange(-avg_log2FC)
+
+head(de_condition_filt)
+
+# can also do this with FindAllMarkers function
+## DO NOT RUN
+## change active identity
+# Idents(merged_ob) <- 'condition'
+# ## run DE for N vs. P and P vs. N condition
+# de_condition <- FindAllMarkers(merged_ob)
+# de_condition_filt <- de_condition %>% dplyr::filter(p_val_adj < .05) %>% arrange(-avg_log2FC)
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Session Info
+
+```{r}
+sessionInfo()
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>

@@ -1,0 +1,1038 @@
+---
+title: "CDS scRNA-seq Workshop 2022 Section 1 Analysis"
+author: "Stephanie The"
+date: '2022-03-21'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Packages
+```{r}
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(RColorBrewer)
+library(scales)
+library(cowplot)
+library(patchwork)
+library(grid)
+library(gridExtra)
+library(harmony)
+
+```
+
+# Setup
+## Import and Create Objects
+```{r}
+set.seed(1383)
+
+setwd('D:/scRNA-seq pipeline/pasca_dataset/')
+
+metadata <- read_csv(paste0('data/metadata.csv'))
+
+obs <- sapply(1:nrow(metadata), function(i) CreateSeuratObject(Read10X(paste0('data/',metadata$path[i], 'filtered_feature_bc_matrix/')), project = 'pasca', min.cells = 3, min.features = 100))
+
+names(obs) <- metadata$sample_id
+
+sample_cell_n_all <- unlist(sapply(obs, function(x) ncol(x)))
+gc()
+
+```
+
+Total # of cells per sample: 
+AdjNorm_TISSUE_1 AdjNorm_TISSUE_2 AdjNorm_TISSUE_3    PDAC_TISSUE_1    PDAC_TISSUE_2    PDAC_TISSUE_3 
+            4511             3398             1200             1626             1789             2486 
+
+## Adding Metadata 
+```{r}
+colnames(metadata)
+metadata_col <- colnames(metadata)[-3]
+  
+for (i in 1:length(obs)) {
+  metadata_full <- data.frame(cell = colnames(obs[[i]]))
+  for (col in metadata_col) {
+    temp <- rep(metadata[i,col,drop=T], times = sample_cell_n_all[i])
+    metadata_full <- cbind(metadata_full, temp)
+  }
+  metadata_full <- metadata_full %>% column_to_rownames("cell")
+  colnames(metadata_full) <- metadata_col
+  obs[[i]] <- AddMetaData(obs[[i]], metadata_full)
+}
+
+```
+
+# QC
+## Before Filtering
+```{r}
+# calculate mitochondria and ribosomal reads
+for (i in 1:length(obs)) {
+  obs[[i]]$percent.mt <- PercentageFeatureSet(obs[[i]], pattern = "^MT-")
+  obs[[i]]$percent.rb <- PercentageFeatureSet(obs[[i]], pattern = '^RP[SL]')
+}
+
+```
+
+```{r}
+# export no line plots
+for (i in 1:length(obs)) {
+  # vlnplot (no lines)
+  file_name_1 <- paste0('plots/qc/qc_vln_before_',metadata$sample_id[i],'.png')
+  png(filename = file_name_1, width = 500, height = 500)
+  print(VlnPlot(obs[[i]], features = c("nFeature_RNA", "nCount_RNA", "percent.mt", "percent.rb"), ncol = 4, pt.size = .5))
+  dev.off()
+  
+  # feature scatter (no lines)
+  file_name_2 <- paste0('plots/qc/qc_featurescatter_before_',metadata$sample_id[i],'.png')
+  plot1 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.mt")
+  plot2 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.rb")
+  plot3 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+  plot4 <- FeatureScatter(object = obs[[i]], feature1 = "percent.mt", feature2 = "percent.rb")
+  png(filename = file_name_2, width = 800, height = 800)
+  print(wrap_plots(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2))
+  dev.off()
+
+}
+
+```
+
+```{r}
+# filtering parameters
+nCount_RNA_range <- sapply(obs, function(x) list(range(x$nCount_RNA)))
+nFeature_RNA_range <- sapply(obs, function(x) list(range(x$nFeature_RNA)))
+percent.mt_range <- sapply(obs, function(x) list(range(x$percent.mt)))
+percent.rb_range <- sapply(obs, function(x) list(range(x$percent.rb)))
+
+vln_y_line <- list(
+  
+  # AdjNorm_TISSUE_1
+  list(nCount_RNA = c(nCount_RNA_range[[1]][1],3e5), nFeature_RNA = c(nFeature_RNA_range[[1]][1], 8000), 
+       percent.mt = c(percent.mt_range[[1]][1],20), percent.rb = c(percent.rb_range[[1]][1],percent.rb_range[[1]][2])),
+  
+  # AdjNorm_TISSUE_2
+  list(nCount_RNA = c(nCount_RNA_range[[2]][1],3e5), nFeature_RNA = c(nFeature_RNA_range[[2]][1], 8000), 
+       percent.mt = c(percent.mt_range[[2]][1],25), percent.rb = c(percent.rb_range[[2]][1],percent.rb_range[[2]][2])),
+  
+  # AdjNorm_TISSUE_3
+  list(nCount_RNA = c(nCount_RNA_range[[3]][1],2e5), nFeature_RNA = c(nFeature_RNA_range[[3]][1], 7500), 
+       percent.mt = c(percent.mt_range[[3]][1],20), percent.rb = c(percent.rb_range[[3]][1],percent.rb_range[[3]][2])),
+  
+  # PDAC_TISSUE_1
+  list(nCount_RNA = c(nCount_RNA_range[[4]][1],1.5e5), nFeature_RNA = c(nFeature_RNA_range[[4]][1], 9000), 
+       percent.mt = c(percent.mt_range[[4]][1],20), percent.rb = c(percent.rb_range[[4]][1],percent.rb_range[[4]][2])),
+  
+  # PDAC_TISSUE_2
+  list(nCount_RNA = c(nCount_RNA_range[[5]][1],6e4), nFeature_RNA = c(nFeature_RNA_range[[5]][1], 7500), 
+       percent.mt = c(percent.mt_range[[5]][1],20), percent.rb = c(percent.rb_range[[5]][1],percent.rb_range[[5]][2])),
+  
+  # PDAC_TISSUE_3
+  list(nCount_RNA = c(nCount_RNA_range[[6]][1],1e5), nFeature_RNA = c(nFeature_RNA_range[[6]][1], 9000), 
+       percent.mt = c(percent.mt_range[[6]][1],25), percent.rb = c(percent.rb_range[[6]][1],percent.rb_range[[6]][2]))
+)
+
+``` 
+
+```{r}
+## exporting line plots
+for (i in 1:length(obs)) {
+  # vlnplot (lines)
+  file_name_1 <- paste0('plots/qc/qc_vln_before_line_',metadata$sample_id[i],'.png')
+  plot1 <- VlnPlot(obs[[i]], features = c("nFeature_RNA"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[i]][[2]][1], vln_y_line[[i]][[2]][2])) & theme(legend.position = 'none')
+  plot2 <- VlnPlot(obs[[i]], features = c("nCount_RNA"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[i]][[1]][1], vln_y_line[[i]][[1]][2])) & theme(legend.position = 'none')
+  plot3 <- VlnPlot(obs[[i]], features = c("percent.mt"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[i]][[3]][1], vln_y_line[[i]][[3]][2])) & theme(legend.position = 'none')
+  plot4 <- VlnPlot(obs[[i]], features = c("percent.rb"), pt.size = 0) & geom_hline(yintercept = c(vln_y_line[[i]][[4]][1], vln_y_line[[i]][[4]][2])) & theme(legend.position = 'none')
+  
+  png(filename = file_name_1, width = 500, height = 500)
+  print(wrap_plots(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2))
+  dev.off()
+  
+  # feature scatter (lines)
+  file_name_2 <- paste0('plots/qc/qc_featurescatter_before_line_',metadata$sample_id[i],'.png')
+  plot1 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.mt") + geom_hline(yintercept = c(vln_y_line[[i]][[3]][1], vln_y_line[[i]][[3]][2])) + geom_vline(xintercept = c(vln_y_line[[i]][[1]][1], vln_y_line[[i]][[1]][2])) + theme(legend.position = 'none')
+  plot2 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.rb") & geom_hline(yintercept = c(vln_y_line[[i]][[4]][1], vln_y_line[[i]][[4]][2])) & geom_vline(xintercept = c(vln_y_line[[i]][[1]][1], vln_y_line[[i]][[1]][2])) & theme(legend.position = 'none')
+  plot3 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA") & geom_hline(yintercept = c(vln_y_line[[i]][[2]][1], vln_y_line[[i]][[2]][2])) & geom_vline(xintercept = c(vln_y_line[[i]][[1]][1], vln_y_line[[i]][[1]][2])) & theme(legend.position = 'none')
+  plot4 <- FeatureScatter(object = obs[[i]], feature1 = "percent.mt", feature2 = "percent.rb") & geom_hline(yintercept = c(vln_y_line[[i]][[4]][1], vln_y_line[[i]][[4]][2])) & geom_vline(xintercept = c(vln_y_line[[i]][[3]][1], vln_y_line[[i]][[3]][2])) & theme(legend.position = 'none')
+
+  png(filename = file_name_2, width = 800, height = 800)
+  print(plot1 + plot2 + plot3 + plot4)
+  dev.off() 
+}
+
+```
+
+```{r}
+# only for workshop 
+## nCount
+png(filename = 'plots/qc/qc_vln_before_AdjNorm_TISSUE_1_nCount.png', width = 500, height = 600)
+print(VlnPlot(obs[[1]], features = 'nCount_RNA')) 
+dev.off()
+
+png(filename = 'plots/qc/qc_vln_before_line_AdjNorm_TISSUE_1_nCount.png', width = 500, height = 600)
+print(VlnPlot(obs[[1]], features = c("nCount_RNA")) & geom_hline(yintercept = c(vln_y_line[[1]][[1]][1], vln_y_line[[1]][[1]][2])) & theme(legend.position = 'none')) 
+dev.off()
+
+## nFeature
+png(filename = 'plots/qc/qc_vln_before_AdjNorm_TISSUE_1_nFeature.png', width = 500, height = 600)
+print(VlnPlot(obs[[1]], features = 'nFeature_RNA')) 
+dev.off()
+
+png(filename = 'plots/qc/qc_vln_before_line_AdjNorm_TISSUE_1_nFeature.png', width = 500, height = 600)
+print(VlnPlot(obs[[1]], features = c("nFeature_RNA")) & geom_hline(yintercept = c(vln_y_line[[1]][[2]][1], vln_y_line[[1]][[2]][2])) & theme(legend.position = 'none')) 
+dev.off()
+
+## percent.mt
+png(filename = 'plots/qc/qc_vln_before_AdjNorm_TISSUE_1_percent_mt.png', width = 500, height = 600)
+print(VlnPlot(obs[[1]], features = 'percent.mt')) 
+dev.off()
+
+png(filename = 'plots/qc/qc_vln_before_line_AdjNorm_TISSUE_1_percent_mt.png', width = 500, height = 600)
+print(VlnPlot(obs[[1]], features = c("percent.mt")) & geom_hline(yintercept = c(vln_y_line[[1]][[3]][1], vln_y_line[[1]][[3]][2])) & theme(legend.position = 'none')) 
+dev.off()
+
+## percent.rb
+png(filename = 'plots/qc/qc_vln_before_AdjNorm_TISSUE_1_percent_rb.png', width = 500, height = 600)
+print(VlnPlot(obs[[1]], features = 'percent.rb')) 
+dev.off()
+
+```
+
+## After Filtering
+```{r}
+for (i in 1:length(obs)) {
+  obs[[i]] <- subset(obs[[i]], subset = (nCount_RNA >= vln_y_line[[i]][[1]][1] & nCount_RNA <= vln_y_line[[i]][[1]][2]) & (nFeature_RNA >= vln_y_line[[i]][[2]][1] & nFeature_RNA <= vln_y_line[[i]][[2]][2]) & (percent.mt >= vln_y_line[[i]][[3]][1] & percent.mt <= vln_y_line[[i]][[3]][2]) & (percent.rb >= vln_y_line[[i]][[4]][1] & percent.rb <= vln_y_line[[i]][[4]][2]))
+}
+
+```
+
+```{r}
+# export no line plots
+for (i in 1:length(obs)) {
+  # vlnplot (no lines)
+  file_name_1 <- paste0('plots/qc/qc_vln_after_',metadata$sample_id[i],'.png')
+  png(filename = file_name_1, width = 500, height = 500)
+  print(VlnPlot(obs[[i]], features = c("nFeature_RNA", "nCount_RNA", "percent.mt", "percent.rb"), ncol = 4, pt.size = .5))
+  dev.off()
+  
+  # feature scatter (no lines)
+  file_name_2 <- paste0('plots/qc/qc_featurescatter_after_',metadata$sample_id[i],'.png')
+  plot1 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.mt")
+  plot2 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "percent.rb")
+  plot3 <- FeatureScatter(object = obs[[i]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+  plot4 <- FeatureScatter(object = obs[[i]], feature1 = "percent.mt", feature2 = "percent.rb")
+  png(filename = file_name_2, width = 800, height = 800)
+  print(wrap_plots(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2))
+  dev.off()
+
+}
+
+```
+
+```{r}
+unlist(sapply(obs, function(x) ncol(x)))
+
+```
+
+AdjNorm_TISSUE_1 AdjNorm_TISSUE_2 AdjNorm_TISSUE_3    PDAC_TISSUE_1    PDAC_TISSUE_2    PDAC_TISSUE_3 
+            4130             2864              874             1389             1740             2085 
+
+# Unbatched Analysis
+## Merge objects
+```{r}
+more_obs <- paste0("c(",paste(sapply(2:length(obs),function(i) paste0("obs[[",i,"]]")),collapse=",",sep=""),")")
+merged_ob <- merge(obs[[1]], eval(parse(text=more_obs)), add.cell.ids = metadata$sample_id)
+
+rm(obs)
+gc()
+
+```
+
+## Normalization
+```{r}
+merged_ob <- NormalizeData(merged_ob, verbose = F)
+
+```
+
+```{r}
+# only for workshop
+x1 <- FetchData(merged_ob, vars = c('CD4','EPCAM','sample_id','condition'), slot = 'counts')
+temp1 <- x1 %>% filter(sample_id == 'AdjNorm_TISSUE_1' & CD4 > 0) %>% ggplot(aes(x = CD4)) + geom_histogram() + theme_bw() +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 300)) + labs(title = 'AdjNorm_TISSUE_1', x = 'Count\n') +
+  theme(axis.title.x = element_blank(), axis.title.y = element_text(size = 15))
+temp2 <- x1 %>% filter(sample_id == 'PDAC_TISSUE_1' & CD4 > 0) %>% ggplot(aes(x = CD4)) + geom_histogram() + theme_bw() +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 100)) + labs(title = 'PDAC_TISSUE_1') + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+p1 <- temp1 + temp2
+p1 <- p1 + plot_annotation(title = 'CD4 Expression (Raw Counts)\n') & theme(plot.title = element_text(hjust = .5))
+
+png(filename = 'plots/qc/cds_pasca_example_norm_raw_counts.png', width = 500, height = 400)
+print(p1)
+dev.off()
+
+x2 <- FetchData(merged_ob, vars = c('CD4','EPCAM','sample_id','condition'))
+temp1 <- x2 %>% filter(sample_id == 'AdjNorm_TISSUE_1' & CD4 > 0) %>% ggplot(aes(x = CD4)) + geom_histogram() + theme_bw() +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 60)) + labs(title = 'AdjNorm_TISSUE_1', x = 'Count\n') +
+  theme(axis.title.x = element_blank(), axis.title.y = element_text(size = 15))
+temp2 <- x2 %>% filter(sample_id == 'PDAC_TISSUE_1' & CD4 > 0) %>% ggplot(aes(x = CD4)) + geom_histogram() + theme_bw() +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 25)) + labs(title = 'PDAC_TISSUE_1') + theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+p2 <- temp1 + temp2
+p2 <- p2 + plot_annotation(title = 'CD4 Expression (Normalized Counts)\n') & theme(plot.title = element_text(hjust = .5))
+
+png(filename = 'plots/qc/cds_pasca_example_norm_normalized_counts.png', width = 500, height = 400)
+print(p2)
+dev.off()
+
+```
+
+## Find Variable Features
+```{r}
+merged_ob <- FindVariableFeatures(merged_ob, selection.method = 'vst', nfeatures = 2000, verbose = F)
+
+```
+
+```{r}
+file_name <- 'plots/qc/cds_pasca_example_merged_qc_variablefeatures.png'
+
+top10_list <- head(VariableFeatures(merged_ob), 10)
+p1 <- VariableFeaturePlot(merged_ob)
+p2 <- LabelPoints(plot = p1, points = top10_list)
+  
+png(filename = file_name, width = 1000, height = 700)
+print(p1+p2)
+dev.off()
+
+```
+
+```{r}
+# only for workshop
+x <- merged_ob@assays$RNA@meta.features[merged_ob@assays$RNA@meta.features$vst.variance.standardized >= 1,]
+x <- x[order(x$vst.variance.standardized),]
+
+x1 <- FetchData(merged_ob, vars = c('TYRP1'))
+
+png(filename = 'plots/qc/cds_pasca_example_merged_var_feature_tyrp1.png', width = 500, height = 500)
+print(x1 %>% filter(TYRP1 > 0) %>% ggplot(aes(x = TYRP1)) + geom_histogram(bins = 20) + theme_bw() +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.5)) + labs(x = 'Frequency\n') +
+  theme(axis.title.x = element_blank(), axis.title.y = element_text(size = 15)))
+dev.off()
+
+x2 <- FetchData(merged_ob, vars = c('HBA1'))
+
+png(filename = 'plots/qc/cds_pasca_example_merged_var_feature_hba1.png', width = 500, height = 500)
+print(x2 %>% filter(HBA1 > 0) %>% ggplot(aes(x = HBA1)) + geom_histogram(bins = 20) + theme_bw() +
+  scale_y_continuous(expand = c(0,0), limits = c(0, 110)) + labs(x = 'Frequency\n') +
+  theme(axis.title.x = element_blank(), axis.title.y = element_text(size = 15)))
+dev.off()
+
+```
+
+```{r}
+# only for workshop
+## 100
+merged_ob1 <- FindVariableFeatures(merged_ob, selection.method = 'vst', nfeatures = 100, verbose = F)
+merged_ob1@reductions <- list()
+merged_ob1 <- ScaleData(merged_ob1)
+merged_ob1 <- RunPCA(merged_ob1, features = VariableFeatures(merged_ob1), verbose = F)
+merged_ob1 <- FindNeighbors(merged_ob1, dims = 1:20)
+merged_ob1 <- FindClusters(merged_ob1, dims = 1:20)
+merged_ob1 <- RunUMAP(merged_ob1, dims = 1:20)
+png(filename = 'plots/qc/cds_pasca_example_merged_var_feature_100_umap.png', width = 600, height = 600)
+print(DimPlot(merged_ob1))
+dev.off()
+
+## 2000
+merged_ob1 <- FindVariableFeatures(merged_ob, selection.method = 'vst', nfeatures = 2000, verbose = F)
+merged_ob1@reductions <- list()
+merged_ob1 <- ScaleData(merged_ob1)
+merged_ob1 <- RunPCA(merged_ob1, features = VariableFeatures(merged_ob1), verbose = F)
+merged_ob1 <- FindNeighbors(merged_ob1, dims = 1:20)
+merged_ob1 <- FindClusters(merged_ob1, dims = 1:20)
+merged_ob1 <- RunUMAP(merged_ob1, dims = 1:20)
+png(filename = 'plots/qc/cds_pasca_example_merged_var_feature_2000_umap.png', width = 600, height = 600)
+print(DimPlot(merged_ob1))
+dev.off()
+
+## 10000
+merged_ob1 <- FindVariableFeatures(merged_ob, selection.method = 'vst', nfeatures = 10000, verbose = F)
+merged_ob1@reductions <- list()
+merged_ob1 <- ScaleData(merged_ob1)
+merged_ob1 <- RunPCA(merged_ob1, features = VariableFeatures(merged_ob1), verbose = F)
+merged_ob1 <- FindNeighbors(merged_ob1, dims = 1:20)
+merged_ob1 <- FindClusters(merged_ob1, dims = 1:20)
+merged_ob1 <- RunUMAP(merged_ob1, dims = 1:20)
+png(filename = 'plots/qc/cds_pasca_example_merged_var_feature_10000_umap.png', width = 600, height = 600)
+print(DimPlot(merged_ob1))
+dev.off()
+
+```
+
+## Check Cell Cycle Batch 
+```{r, eval=FALSE}
+cc_genes <- cc.genes.updated.2019
+
+# use if want all cell cycle signals regressed out
+merged_ob <- CellCycleScoring(object = merged_ob, s.features = cc_genes$s.genes, g2m.features = cc_genes$g2m.genes, set.ident = TRUE)
+
+merged_ob <- ScaleData(object = merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes))
+merged_ob <- RunPCA(object = merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes), 
+                    nfeatures.print = 5, reduction.name = 'cc_pca')
+
+png(file = 'plots/qc/cds_pasca_example_cc_pca_before.png', width = 500, height = 500)
+print(DimPlot(merged_ob, reduction = 'cc_pca', group.by = 'Phase'))
+dev.off()
+
+# regressing out all cc effects
+merged_ob <- ScaleData(merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes),
+                   vars.to.regress = c('S.Score', 'G2M.Score')) 
+merged_ob <- RunPCA(object = merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes), 
+                    nfeatures.print = 5, reduction.name = 'cc_pca')
+
+png(file = 'plots/qc/cds_pasca_example_cc_pca_after.png', width = 500, height = 500)
+print(DimPlot(merged_ob, reduction = 'cc_pca', group.by = 'Phase'))
+dev.off()
+
+```
+
+```{r}
+# only for workshop
+# regressing out all cc effects
+merged_ob$CC.Difference <- merged_ob$S.Score - merged_ob$G2M.Score
+merged_ob <- ScaleData(merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes),
+                   vars.to.regress = c("CC.Difference")) 
+merged_ob <- RunPCA(object = merged_ob, features = c(cc_genes$s.genes, cc_genes$g2m.genes), 
+                    nfeatures.print = 5, reduction.name = 'cc_pca')
+
+png(file = 'plots/qc/cds_pasca_example_cc_pca_after_some.png', width = 500, height = 500)
+print(DimPlot(merged_ob, reduction = 'cc_pca', group.by = 'Phase'))
+dev.off()
+
+```
+
+## Scaling
+```{r}
+merged_ob <- ScaleData(merged_ob, vars.to.regress = 'nCount_RNA') 
+
+```
+
+## PCA
+```{r, eval=FALSE}
+merged_ob <- RunPCA(object = merged_ob, features = VariableFeatures(merged_ob), 
+                nfeatures.print = 5)
+
+# qualitative
+png('plots/qc/cds_pasca_example_qc_pca_elbowplot.png', width = 500, height = 500)
+print(ElbowPlot(object = merged_ob, ndims = 50))
+dev.off()
+
+# quantitative 
+pct <- merged_ob@reductions$pca@stdev / sum(merged_ob@reductions$pca@stdev) * 100 
+cum <- cumsum(pct) 
+co1 <- which(cum > 90 & pct < 5)[1] 
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > .1), decreasing = T)[1] + 1
+pcs <- min(co1, co2) # 18 pcs
+
+png('plots/qc/cds_pasca_example_qc_pca_sample_id.png', width = 700, height = 700)
+print(DimPlot(merged_ob, reduction = 'pca', group.by = 'sample_id'))
+dev.off()
+
+```
+
+```{r}
+# only for workshop
+merged_ob <- JackStraw(merged_ob)
+merged_ob <- ScoreJackStraw(merged_ob, dims = 1:20)
+png('plots/qc/cds_pasca_example_qc_pca_jackstrawplot.png')
+print(JackStrawPlot(merged_ob, dims = 1:20))
+dev.off()
+
+```
+
+```{r}
+# only for workshop
+x <- as.data.frame(merged_ob@reductions$pca@cell.embeddings)
+x$sample_id <- merged_ob$sample_id
+
+## PC1 vs. PC2
+png(filename = 'plots/qc/cds_pasca_example_merged_pca_pc1vs2.png', width = 600, height = 600)
+print(x %>% ggplot(aes(x = pca_1, y = pca_2)) + geom_point() + theme_bw() + labs(x = 'PC1', y = 'PC2'))
+dev.off()
+
+png(filename = 'plots/qc/cds_pasca_example_merged_pca_pc1vs2_sample.png', width = 600, height = 600)
+print(x %>% ggplot(aes(x = pca_1, y = pca_2, color = sample_id)) + geom_point() + theme_bw() + labs(x = 'PC1', y = 'PC2'))
+dev.off()
+
+## PC25 vs. PC26
+png(filename = 'plots/qc/cds_pasca_example_merged_pca_pc25vs26.png', width = 600, height = 600)
+print(x %>% ggplot(aes(x = pca_25, y = pca_26)) + geom_point() + theme_bw() + labs(x = 'PC25', y = 'PC26'))
+dev.off()
+
+png(filename = 'plots/qc/cds_pasca_example_merged_pca_pc25vs26_sample.png', width = 600, height = 600)
+print(x %>% ggplot(aes(x = pca_25, y = pca_26, color = sample_id)) + geom_point() + theme_bw() + labs(x = 'PC25', y = 'PC26'))
+dev.off()
+
+## PC49 vs. PC50
+png(filename = 'plots/qc/cds_pasca_example_merged_pca_pc49vs50.png', width = 600, height = 600)
+print(x %>% ggplot(aes(x = pca_49, y = pca_50)) + geom_point() + theme_bw() + labs(x = 'PC49', y = 'PC50'))
+dev.off()
+
+png(filename = 'plots/qc/cds_pasca_example_merged_pca_pc49vs50_sample.png', width = 600, height = 600)
+print(x %>% ggplot(aes(x = pca_49, y = pca_50, color = sample_id)) + geom_point() + theme_bw() + labs(x = 'PC49', y = 'PC50'))
+dev.off()
+
+```
+
+## Clustering 
+```{r, eval=FALSE}
+merged_ob <- FindNeighbors(merged_ob, dims = 1:pcs, k.param = 20)
+merged_ob <- FindClusters(merged_ob)
+head(Idents(merged_ob), 5)
+
+# store clusters in other metadata slot
+merged_ob$clusters <- Idents(merged_ob)
+
+```
+
+```{r}
+# only for workshop
+merged_ob1 <- merged_ob
+merged_ob1@reduction$umap <- NULL
+merged_ob1 <- FindNeighbors(merged_ob1, dims = 1:pcs, k.param = 20)
+merged_ob1 <- FindClusters(merged_ob1, resolution = .1)
+merged_ob1 <- RunUMAP(merged_ob1, dims = 1:pcs)
+png('plots/umap/cds_pasca_example_clustering_0.1_umap.png', width = 600, height = 600)
+print(DimPlot(merged_ob1))
+dev.off()
+
+merged_ob1 <- merged_ob
+merged_ob1@reduction$umap <- NULL
+merged_ob1 <- FindNeighbors(merged_ob1, dims = 1:pcs, k.param = 20)
+merged_ob1 <- FindClusters(merged_ob1, resolution = .4)
+merged_ob1 <- RunUMAP(merged_ob1, dims = 1:pcs)
+png('plots/umap/cds_pasca_example_clustering_0.4_umap.png', width = 600, height = 600)
+print(DimPlot(merged_ob1))
+dev.off()
+
+merged_ob1 <- merged_ob
+merged_ob1@reduction$umap <- NULL
+merged_ob1 <- FindNeighbors(merged_ob1, dims = 1:pcs, k.param = 20)
+merged_ob1 <- FindClusters(merged_ob1, resolution = .8)
+merged_ob1 <- RunUMAP(merged_ob1, dims = 1:pcs)
+png('plots/umap/cds_pasca_example_clustering_0.8_umap.png', width = 600, height = 600)
+print(DimPlot(merged_ob1))
+dev.off()
+
+merged_ob1 <- merged_ob
+merged_ob1@reduction$umap <- NULL
+merged_ob1 <- FindNeighbors(merged_ob1, dims = 1:pcs, k.param = 20)
+merged_ob1 <- FindClusters(merged_ob1, resolution = 1)
+merged_ob1 <- RunUMAP(merged_ob1, dims = 1:pcs)
+png('plots/umap/cds_pasca_example_clustering_1_umap.png', width = 600, height = 600)
+print(DimPlot(merged_ob1))
+dev.off()
+
+merged_ob1 <- merged_ob
+merged_ob1@reduction$umap <- NULL
+merged_ob1 <- FindNeighbors(merged_ob1, dims = 1:pcs, k.param = 20)
+merged_ob1 <- FindClusters(merged_ob1, resolution = 1.2)
+merged_ob1 <- RunUMAP(merged_ob1, dims = 1:pcs)
+png('plots/umap/cds_pasca_example_clustering_1.2_umap.png', width = 600, height = 600)
+print(DimPlot(merged_ob1))
+dev.off()
+
+```
+
+## UMAP 
+```{r, eval=FALSE}
+merged_ob <- RunUMAP(merged_ob, dims = 1:pcs)
+
+png('plots/umap/cds_pasca_example_umap.png', width = 700, height = 700)
+print(DimPlot(merged_ob, group.by = 'clusters'))
+dev.off()
+
+# pdf('plots/umap/cds_pasca_example_umap.pdf', width = 7, height = 7)
+# print(DimPlot(merged_ob, group.by = 'clusters'))
+# dev.off()
+
+png('plots/umap/cds_pasca_example_umap_labeled.png', width = 700, height = 700)
+print(DimPlot(merged_ob, group.by = 'clusters', label = T))
+dev.off()
+
+# pdf('plots/umap/cds_pasca_example_umap_labeled.pdf', width = 7, height = 7)
+# print(DimPlot(merged_ob, group.by = 'clusters', label = T))
+# dev.off()
+
+png('plots/umap/cds_pasca_example_umap_clusters_sample_id.png', width = 1200, height = 700)
+print(DimPlot(merged_ob, group.by = c('clusters', 'sample_id')))
+dev.off()
+
+# pdf('plots/umap/cds_pasca_example_umap_clusters_sample_id.pdf', width = 12, height = 7)
+# print(DimPlot(merged_ob, group.by = c('clusters', 'sample_id')))
+# dev.off()
+
+```
+
+```{r}
+# only for workshop
+merged_ob <- RunTSNE(merged_ob, dims = 1:pcs)
+png('plots/umap/cds_pasca_example_merged_tsne.png', width = 700, height = 700)
+print(DimPlot(merged_ob, group.by = 'clusters', reduction = 'tsne'))
+dev.off()
+
+```
+
+```{r}
+# only for workshop
+Idents(merged_ob) <- 'clusters'
+
+png('plots/umap/cds_pasca_example_merged_sample_condition.png', width = 1200, height = 700)
+print(DimPlot(merged_ob, group.by = c('sample_id', 'condition')))
+dev.off()
+
+```
+
+```{r}
+saveRDS(merged_ob, file = 'cds_pasca_example_umap_032222.rds')
+
+```
+
+## DE
+```{r}
+de <- FindMarkers(merged_ob, ident.1 = 0)
+de <- de %>% rownames_to_column('gene')
+write_csv(de, file = 'tables/cds_pasca_example_cluster0_de_032222.csv')
+de <- de %>% dplyr::filter(p_val_adj < .05)
+write_csv(de, file = 'tables/cds_pasca_example_cluster0_de_filt_032222.csv')
+
+```
+
+# Batch Correction/Integration Analysis
+## Harmony
+### Integration
+```{r}
+# requires scale.data slot
+merged_ob <- RunHarmony(merged_ob, group.by.vars = c('sample_id'), dims.use = 1:pcs, verbose = F)
+
+```
+
+### Clustering
+```{r}
+merged_ob <- FindNeighbors(merged_ob, dims = 1:pcs, k.param = 20, reduction = 'harmony')
+merged_ob <- FindClusters(merged_ob)
+head(Idents(merged_ob), 5)
+
+# store clusters in other metadata slot
+merged_ob$harmony_clusters <- Idents(merged_ob)
+
+```
+
+### UMAP
+```{r}
+merged_ob <- RunUMAP(merged_ob, dims = 1:pcs, reduction = 'harmony', reduction.name = 'umap_harmony')
+
+png('plots/umap/cds_pasca_example_harmony_umap.png', width = 700, height = 700)
+print(DimPlot(merged_ob, group.by = 'harmony_clusters', reduction = 'umap_harmony'))
+dev.off()
+
+# pdf('plots/umap/cds_pasca_example_harmony_umap.pdf', width = 7, height = 7)
+# print(DimPlot(merged_ob, group.by = 'harmony_clusters', reduction = 'umap_harmony'))
+# dev.off()
+
+png('plots/umap/cds_pasca_example_harmony_umap_labeled.png', width = 700, height = 700)
+print(DimPlot(merged_ob, group.by = 'harmony_clusters', label = T, reduction = 'umap_harmony'))
+dev.off()
+
+# pdf('plots/umap/cds_pasca_example_harmony_umap_labeled.pdf', width = 7, height = 7)
+# print(DimPlot(merged_ob, group.by = 'harmony_clusters', label = T, reduction = 'umap_harmony'))
+# dev.off()
+
+png('plots/umap/cds_pasca_example_harmony_umap_clusters_sample_id.png', width = 1200, height = 700)
+print(DimPlot(merged_ob, group.by = c('harmony_clusters', 'sample_id'), reduction = 'umap_harmony'))
+dev.off()
+
+# pdf('plots/umap/cds_pasca_example_harmony_umap_clusters_sample_id.pdf', width = 12, height = 7)
+# print(DimPlot(merged_ob, group.by = c('harmony_clusters', 'sample_id'), reduction = 'umap_harmony'))
+# dev.off()
+
+```
+
+```{r}
+saveRDS(merged_ob, file = 'cds_pasca_example_umap_harmony_032322.rds')
+
+```
+
+## Seurat Integration
+### Split Merged Object by Batch
+```{r}
+obs <- SplitObject(merged_ob, split.by = 'sample_id')
+gc()
+
+```
+
+### Normalization & Variable Features
+```{r, eval=FALSE}
+for (i in 1:length(obs)) {
+  obs[[i]] <- NormalizeData(obs[[i]], verbose = F)
+  obs[[i]] <- FindVariableFeatures(obs[[i]], selection.method = 'vst', nfeatures = 2000, verbose = F)
+}
+
+```
+
+### Integration
+Done on cluster (give object to people in lab section; don't have to run themselves; requires too much memory)
+```{r}
+genes <- SelectIntegrationFeatures(obs)
+
+# identify anchors 
+anchors <- FindIntegrationAnchors(object.list = obs, dims = 1:50)
+gc()
+
+# integrate objects
+all_genes <- lapply(obs, rownames) %>% Reduce(intersect, .)
+integrate <- IntegrateData(anchorset = anchors, dims = 1:50, features.to.integrate = all_genes)
+gc()
+
+# change assay to integrated slot
+DefaultAssay(integrate) <- 'integrated'
+
+saveRDS(integrate, 'cds_pasca_example_integrated_ob_010722.rds')
+
+```
+
+## Scaling
+```{r}
+integrate <- ScaleData(integrate, vars.to.regress = c('nCount_RNA'), verbose = F)
+
+saveRDS(integrate, file = 'cds_pasca_example_integrated_scaled_010722.rds')
+
+```
+
+## PCA
+```{r}
+integrate <- RunPCA(object = integrate, features = VariableFeatures(object = integrate), nfeatures.print = 5, reduction.name = 'pca_integrated', reduction.key = 'intPCA_', verbose = F)
+
+png('cds_pasca_example_integrate_qc_elbowplot.png', width = 700, height = 700)
+print(ElbowPlot(object = integrate, ndims = 50, reduction = 'pca_integrated'))
+dev.off()
+
+pct <- integrate@reductions$pca_integrated@stdev / sum(integrate@reductions$pca_integrated@stdev) * 100 
+cum <- cumsum(pct) 
+co1 <- which(cum > 90 & pct < 5)[1] 
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > .1), decreasing = T)[1] + 1
+pcs <- min(co1, co2) # pcs = 18
+
+png('cds_pasca_example_integrate_qc_pca_run_id.png', width = 700, height = 700)
+print(DimPlot(integrate, reduction = 'pca_integrated', group.by = 'sample_id'))
+dev.off()
+
+```
+
+## Clustering
+```{r}
+integrate <- FindNeighbors(integrate, reduction = 'pca_integrated', dims = 1:pcs, k.param = 20, verbose = F)
+integrate <- FindClusters(integrate, resolution = 0.5, verbose = F)
+head(Idents(integrate), 5)
+
+integrate$integrate_clusters <- Idents(integrate)
+
+```
+
+## UMAP
+```{r}
+integrate <- RunUMAP(integrate, dims = 1:pcs, reduction = 'pca_integrated', reduction.name = 'umap_integrated', reduction.key = 'intUMAP_', verbose = F)
+
+png('cds_pasca_example_integrate_umap.png', width = 700, height = 700)
+print(DimPlot(integrate, reduction = 'umap_integrated', group.by = 'integrate_clusters'))
+dev.off()
+
+pdf('cds_pasca_example_integrate_umap.pdf', width = 7, height = 7)
+print(DimPlot(integrate, reduction = 'umap_integrated', group.by = 'integrate_clusters'))
+dev.off()
+
+png('cds_pasca_example_integrate_umap_labeled.png', width = 700, height = 700)
+print(DimPlot(integrate, reduction = 'umap_integrated', group.by = 'integrate_clusters', label = T))
+dev.off()
+
+pdf('cds_pasca_example_integrate_umap_labeled.pdf', width = 7, height = 7)
+print(DimPlot(integrate, reduction = 'umap_integrated', group.by = 'integrate_clusters', label = T))
+dev.off()
+
+png('cds_pasca_example_integrate_umap_clusters_sample_id.png', width = 1200, height = 700)
+print(DimPlot(integrate, reduction = 'umap_integrated', group.by = c('integrate_clusters', 'sample_id')))
+dev.off()
+
+pdf('cds_pasca_example_integrate_umap_clusters_sample_id.pdf', width = 12, height = 7)
+print(DimPlot(integrate, reduction = 'umap_integrated', group.by = c('integrate_clusters', 'sample_id')))
+dev.off()
+
+integrate@assays$integrated@data <- matrix()
+integrate@assays$integrated@scale.data <- matrix()
+saveRDS(integrate, 'cds_pasca_example_integrate_umap_no_data_scale_011222.rds')
+
+
+```
+
+# Conserved Markers
+Maybe should go with integration section
+```{r}
+Idents(merged_ob) <- 'harmony_clusters'
+cm_cluster0 <- FindConservedMarkers(merged_ob, ident.1 = 0, grouping.var = 'sample_id')
+cm_cluster0 <- cm_cluster0 %>% rownames_to_column('gene')
+
+write_csv(cm_cluster0, 'tables/cds_pasca_example_harmony_cluster0_conserved_markers.csv')
+
+```
+
+# Cell Annotations
+Using harmony clusters
+```{r}
+genes <- c('TFF1','KRT18','KRT19','SPINK1','KRT8','MKI67','CLU','MMP7','SPP1','REG1A','CTRB2','PRSS1','DCN','LUM','CPA3','TPSAB1','CDH5','VWF','PLVAP','IRF7','COL3A1','COL1A1','PDGFRB','CDH11','ACTA2','CD3E','NCAM1','NKG7','CD3D','CD14','HLA-DRA','GZMB','LAMP3','CCL22','ITGAX','ITGAM','APOE','LYZ','IGJ','CD79A','MS4A1')
+
+png('plots/express/cds_pasca_example_harmony_clusters_dotplot.png', width = 1200, height = 600)
+print(DotPlot(merged_ob, features = genes, group.by = 'harmony_clusters') + RotatedAxis())
+dev.off()
+
+png('plots/express/cds_pasca_example_harmony_clusters_vlnplot_cd3e_cd4_cd8a_nkg7_ncam1.png', width = 900, height = 700)
+print(VlnPlot(merged_ob, features = c('CD3E','CD4','CD8A','NKG7','NCAM1'), group.by = 'harmony_clusters', ncol = 2))
+dev.off()
+
+png('plots/express/cds_pasca_example_harmony_clusters_featureplot_cd3e_cd4_cd8a_nkg7_ncam1.png', width = 800, height = 600)
+print(FeaturePlot(merged_ob, features = c('CD3E','CD4','CD8A','NKG7','NCAM1'), ncol = 2, reduction = 'umap_harmony'))
+dev.off()
+
+png('plots/express/cds_pasca_example_harmony_clusters_ridgeplot_krt18.png', width = 800, height = 600)
+print(RidgePlot(merged_ob, features = c('KRT18'), ncol = 2))
+dev.off()
+
+data <- FetchData(merged_ob, vars = c('TFF1','KRT18','KRT19','SPINK1','KRT8','MKI67','CLU','MMP7','harmony_clusters'))
+data <- data[order(data$harmony_clusters),]
+df_scaled <- apply(data[,-ncol(data)], MARGIN = 2, FUN = function(x) (rescale(x, to = c(-2,2))))
+rownames(df_scaled) <- rownames(data)
+
+anno <- data[,'harmony_clusters',drop=F]
+rownames(anno) <- rownames(data)
+
+png('plots/express/cds_pasca_example_harmony_clusters_heatmap_epithelial.png', width = 1000, height = 400)
+print(pheatmap(t(df_scaled), cluster_rows = F, cluster_cols = F, annotation_col = anno, show_colnames = F, color = colorRampPalette(colors = c('#8A2BE2','#000000','#FFFF00'))(250)))
+dev.off()
+
+png('plots/express/cds_pasca_example_harmony_cluster5_6_vlnplot.png', width = 1200, height = 600)
+print(VlnPlot(merged_ob, features = c('CD14','HLA-DRA','APOE','LYZ'), group.by = 'harmony_clusters', ncol = 2))
+dev.off()
+
+de <- FindAllMarkers(merged_ob)
+write_csv(de, 'tables/cds_pasca_example_harmony_clusters_de_032422.csv')
+
+de <- de %>% filter(p_val_adj < .05)
+write_csv(de, 'tables/cds_pasca_example_harmony_clusters_de_filt_032422.csv')
+
+```
+
+0 = T (CD8)
+1 = acinar
+2 = epithelial
+3 = T (CD4)
+4 = epithelial
+5 = myeloid (macrophage)
+6 = myeloid (macrophage)
+7 = myeloid (granulocyte)
+8 = fibroblast (myCAF)
+9 = myeloid (macrophage)
+10 = acinar
+11 = B
+12 = NK
+13 = endothelial
+14 = myeloid (mast)
+15 = epithelial
+16 = epithelial
+17 = DC
+18 = T (CD4)
+19 = none
+20 = fibroblast (iCAF)
+21 = DC
+22 = acinar
+23 = acinar
+24 = epithelial
+25 = endocrine
+
+```{r}
+new_clusters <- c('T','acinar','epithelial','T','epithelial','myeloid','myeloid','myeloid','fibroblast','myeloid','acinar',
+                  'B','NK','endothelial','myeloid','epithelial','epithelial','DC','T','RBC','fibroblast','DC','acinar',
+                  'acinar','epithelial','endocrine')
+names(new_clusters) <- 0:25
+merged_ob <- RenameIdents(merged_ob, new_clusters)
+merged_ob$annote_1 <- Idents(merged_ob)
+
+png('plots/umap/cds_pasca_example_harmony_umap_annote_1.png', width = 700, height = 700)
+print(DimPlot(merged_ob, reduction = 'umap_harmony', group.by = 'annote_1'))
+dev.off()
+
+saveRDS(merged_ob, file = 'cds_pasca_example_umap_harmony_032322.rds')
+
+```
+
+# Fibroblast Cells Analysis
+## Subset population
+```{r}
+fb <- subset(merged_ob, subset = annote_1 == 'fibroblast')
+
+```
+
+## Normalization
+```{r}
+fb <- NormalizeData(fb, verbose = F)
+
+```
+
+## Find Variable Features
+```{r}
+fb <- FindVariableFeatures(fb, selection.method = 'vst', nfeatures = 2000, verbose = F)
+
+```
+
+```{r}
+file_name <- 'plots/qc/cds_pasca_example_fibro_qc_variablefeatures.png'
+
+top10_list <- head(VariableFeatures(fb), 10)
+p1 <- VariableFeaturePlot(fb)
+p2 <- LabelPoints(plot = p1, points = top10_list)
+  
+png(filename = file_name, width = 1000, height = 700)
+print(p1+p2)
+dev.off()
+
+```
+
+## Scaling
+```{r}
+fb <- ScaleData(fb, vars.to.regress = 'nCount_RNA') 
+
+```
+
+## PCA
+```{r, eval=FALSE}
+fb <- RunPCA(object = fb, features = VariableFeatures(fb), 
+                nfeatures.print = 5)
+
+# qualitative
+png('plots/qc/cds_pasca_example_fibro_qc_pca_elbowplot.png', width = 500, height = 500)
+print(ElbowPlot(object = fb, ndims = 50))
+dev.off()
+
+# quantitative 
+pct <- fb@reductions$pca@stdev / sum(fb@reductions$pca@stdev) * 100 
+cum <- cumsum(pct) 
+co1 <- which(cum > 90 & pct < 5)[1] 
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > .1), decreasing = T)[1] + 1
+pcs <- min(co1, co2) # 13 pcs
+
+png('plots/qc/cds_pasca_example_fibro_qc_pca_sample_id.png', width = 700, height = 700)
+print(DimPlot(fb, reduction = 'pca', group.by = 'sample_id'))
+dev.off()
+
+```
+
+## Integration (w/ Harmony)
+```{r}
+# requires scale.data slot
+fb <- RunHarmony(fb, group.by.vars = c('sample_id'), dims.use = 1:pcs, verbose = F)
+
+```
+
+## Clustering
+```{r}
+fb <- FindNeighbors(fb, dims = 1:pcs, k.param = 20, reduction = 'harmony')
+fb <- FindClusters(fb)
+head(Idents(fb), 5)
+
+# store clusters in other metadata slot
+fb$harmony_clusters <- Idents(fb)
+
+```
+
+## UMAP
+```{r}
+fb <- RunUMAP(fb, dims = 1:pcs, reduction = 'harmony', reduction.name = 'umap_harmony')
+
+png('plots/umap/cds_pasca_example_fibro_harmony_umap.png', width = 500, height = 500)
+print(DimPlot(fb, group.by = 'harmony_clusters', reduction = 'umap_harmony'))
+dev.off()
+
+# pdf('plots/umap/cds_pasca_example_fibro_harmony_umap.pdf', width = 5, height = 5)
+# print(DimPlot(fb, group.by = 'harmony_clusters', reduction = 'umap_harmony'))
+# dev.off()
+
+png('plots/umap/cds_pasca_example_fibro_harmony_umap_labeled.png', width = 500, height = 500)
+print(DimPlot(fb, group.by = 'harmony_clusters', label = T, reduction = 'umap_harmony'))
+dev.off()
+
+# pdf('plots/umap/cds_pasca_example_fibro_harmony_umap_labeled.pdf', width = 5, height = 5)
+# print(DimPlot(fb, group.by = 'harmony_clusters', label = T, reduction = 'umap_harmony'))
+# dev.off()
+
+png('plots/umap/cds_pasca_example_fibro_harmony_umap_clusters_sample_id.png', width = 1000, height = 500)
+print(DimPlot(fb, group.by = c('harmony_clusters', 'sample_id'), reduction = 'umap_harmony'))
+dev.off()
+
+# pdf('plots/umap/cds_pasca_example_fibro_harmony_umap_clusters_sample_id.pdf', width = 10, height = 5)
+# print(DimPlot(fb, group.by = c('harmony_clusters', 'sample_id'), reduction = 'umap_harmony'))
+# dev.off()
+
+```
+
+```{r}
+saveRDS(fb, file = 'cds_pasca_example_fibro_umap_harmony_032922.rds')
+
+```
+
+## Cell Annotation
+```{r}
+png('plots/express/cds_pasca_example_fibro_harmony_umap_clusters_dotplot.png', width = 800, height = 500)
+print(DotPlot(fb, features = c('COL1A1','COL3A1','PDGFRB','CDH11','ACTA2','DCN','LUM')))
+dev.off()
+
+```
+
+0 = myCAF
+1 = iCAF
+2 = fibroblast
+3 = myCAF
+4 = fibroblast
+5 = fibroblast
+6 = iCAF
+7 = myCAF
+8 = iCAF
+9 = iCAF
+
+```{r}
+new_clusters <- c('myCAF','iCAF','fibroblast','myCAF','fibroblast','fibroblast','iCAF','myCAF','iCAF','iCAF')
+names(new_clusters) <- 0:9
+fb <- RenameIdents(fb, new_clusters)
+fb$annote_1 <- Idents(fb)
+
+png('plots/umap/cds_pasca_example_fibro_harmony_umap_annote_1.png', width = 500, height = 500)
+print(DimPlot(fb, reduction = 'umap_harmony', group.by = 'annote_1'))
+dev.off()
+
+saveRDS(fb, file = 'cds_pasca_example_fibro_umap_harmony_032922.rds')
+
+```
+
+## Transfering Labels
+```{r}
+x <- FetchData(fb, vars = c('annote_1'))
+y <- WhichCells(merged_ob, expression = annote_1 == 'fibroblast')
+x <- x[y,,drop=F]
+
+merged_ob$annote_2 <- as.character(merged_ob$annote_1)
+merged_ob$annote_2[y] <- as.character(x$annote_1)
+
+colors <- scales::hue_pal()(13)
+colors <- c(colors[1:2],colors[8],colors[4:7], colors[3],colors[9:13])
+
+png('plots/umap/cds_pasca_example_fibro_harmony_umap_annote_2.png', width = 700, height = 700)
+print(DimPlot(merged_ob, reduction = 'umap_harmony', group.by = 'annote_2') + scale_colour_manual(values = colors))
+dev.off()
+
+saveRDS(merged_ob, file = 'cds_pasca_example_umap_harmony_032322.rds')
+
+```
+
+

@@ -1,0 +1,718 @@
+---
+title: "CDS scRNA-seq Workshop 2022 Section 2 - Subtyping and Pathway Analysis"
+author: "Stephanie The"
+date: '2022-04-06'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+editor_options: 
+  markdown: 
+    wrap: 72
+  chunk_output_type: console
+---
+
+# Packages
+
+**If you are starting a new session, you will need to reload the
+packages and run the code below:**
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(RColorBrewer)
+library(scales)
+library(cowplot)
+library(patchwork)
+library(grid)
+library(gridExtra)
+library(harmony)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ReactomePA)
+library(msigdbr)
+
+```
+
+```{r}
+# set seed
+set.seed(1383)
+
+# set working directory 
+setwd('D:/scRNA-seq pipeline/pasca_dataset/')
+
+# load annotated object
+merged_ob <- readRDS('cds_pasca_example_umap_harmony_annote_1.rds')
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Subtyping Analysis
+
+Earlier we gave very broad, general labels to the clusters, but from
+looking at the article, we see that there are a lot of subtypes for some
+of the cell types, such as myeloid, T, and fibroblasts. With subtyping
+analysis, we can look at these cell types in further detail.
+
+We will first be doing this with the fibroblasts as an example.
+
+------------------------------------------------------------------------
+
+## Subset population
+
+We first subset any cell with the label 'fibroblast' and make a new
+object with only fibroblasts. We can do this with the code below:
+
+```{r}
+fb <- subset(merged_ob, subset = annote_1 == 'fibroblast')
+
+```
+
+We will then run the main pipeline again on the subsetted object from
+normalization to cell annotation. We have to do this because we are now
+looking at subset of cells instead of the whole dataset. We will also
+integrate with Harmony like we did before because the batch effect will
+still be present in the raw counts.
+
+------------------------------------------------------------------------
+
+## Main Pipeline
+
+### Normalization
+
+```{r}
+fb <- NormalizeData(fb, verbose = F)
+
+```
+
+### Find Variable Features
+
+```{r}
+fb <- FindVariableFeatures(fb, selection.method = 'vst', nfeatures = 2000, verbose = F)
+
+```
+
+### Scaling
+
+```{r}
+fb <- ScaleData(fb, vars.to.regress = 'nCount_RNA', verbose = F) 
+
+```
+
+### PCA
+
+```{r}
+fb <- RunPCA(object = fb, features = VariableFeatures(fb), 
+                nfeatures.print = 5, verbose = F)
+
+# qualitative
+# ElbowPlot(object = fb, ndims = 50)
+
+# quantitative 
+pct <- fb@reductions$pca@stdev / sum(fb@reductions$pca@stdev) * 100 
+cum <- cumsum(pct) 
+co1 <- which(cum > 90 & pct < 5)[1] 
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > .1), decreasing = T)[1] + 1
+pcs <- min(co1, co2) # 14 pcs
+
+# DimPlot(fb, reduction = 'pca', group.by = 'sample_id')
+
+```
+
+### Integration (w/ Harmony)
+
+```{r}
+fb <- RunHarmony(fb, group.by.vars = c('sample_id'), dims.use = 1:pcs, verbose = F)
+
+```
+
+### Clustering
+
+```{r}
+fb <- FindNeighbors(fb, dims = 1:pcs, k.param = 20, reduction = 'harmony', verbose = F)
+fb <- FindClusters(fb, verbose = F)
+head(Idents(fb), 5)
+
+# store clusters in other metadata slot
+fb$harmony_clusters <- Idents(fb)
+
+```
+
+### UMAP
+
+```{r fig.height=5,fig.width=7}
+fb <- RunUMAP(fb, dims = 1:pcs, reduction = 'harmony', reduction.name = 'umap_harmony', verbose = F)
+
+DimPlot(fb, group.by = 'harmony_clusters', reduction = 'umap_harmony')
+
+```
+
+```{r fig.height=5, fig.width=10}
+DimPlot(fb, group.by = c('harmony_clusters', 'sample_id'), reduction = 'umap_harmony')
+
+```
+
+### Save Fibroblast Object
+
+```{r eval=FALSE}
+saveRDS(fb, file = 'cds_pasca_example_fibro_umap_harmony_032922.rds')
+
+```
+
+### Cell Annotation
+
+```{r fig.height=5, fig.width=9}
+# look at fibroblast gene markers
+DotPlot(fb, features = c('COL1A1','COL3A1','PDGFRB','CDH11','ACTA2','DCN','LUM'))
+
+```
+
+-   0 = myCAF
+-   1 = iCAF
+-   2 = fibroblast
+-   3 = myCAF
+-   4 = fibroblast
+-   5 = fibroblast
+-   6 = iCAF
+-   7 = myCAF
+-   8 = iCAF
+-   9 = iCAF
+
+```{r fig.height=5, fig.width=7}
+# add new labels to object
+new_clusters <- c('myCAF','iCAF','fibroblast','myCAF','fibroblast','fibroblast','iCAF','myCAF','iCAF','iCAF')
+names(new_clusters) <- 0:9
+fb <- RenameIdents(fb, new_clusters)
+fb$annote_1 <- Idents(fb)
+
+DimPlot(fb, reduction = 'umap_harmony', group.by = 'annote_1')
+
+```
+
+### Save Fibroblast (newly annotated)
+
+```{r eval=FALSE}
+saveRDS(fb, file = 'cds_pasca_example_fibro_umap_harmony_annote_1_032922.rds')
+
+```
+
+------------------------------------------------------------------------
+
+## Transfering Labels
+
+After annotating our new fibroblast clusters, we can transfer the labels
+to the whole dataset if we wanted to. We can do this with the code
+below:
+
+```{r fig.height=5, fig.width=7}
+# get the new fibroblast labels from the fibroblast object 
+x <- FetchData(fb, vars = c('annote_1'))
+
+# find the cell names that were originally called 'fibroblast'
+y <- WhichCells(merged_ob, expression = annote_1 == 'fibroblast')
+
+# order the cells from the fibroblast object so they are in the same order in the whole dataset
+x <- x[y,,drop=F]
+
+# create a new annotation column in the metadata slot
+merged_ob$annote_2 <- as.character(merged_ob$annote_1)
+
+# add the new fibroblast labels to the new annotation column
+merged_ob$annote_2[y] <- as.character(x$annote_1)
+
+# plot UMAP with new labels
+colors <- scales::hue_pal()(13)
+colors <- c(colors[1:2],colors[8],colors[4:7], colors[3],colors[9:13])
+DimPlot(merged_ob, reduction = 'umap_harmony', group.by = 'annote_2') + scale_colour_manual(values = colors)
+
+```
+
+------------------------------------------------------------------------
+
+## Exercise: Myeloid Subtyping Analysis
+
+Now that we have an idea of how to subtype, I would like you to subtype
+the myeloid cell population. Start by subsetting the cells with the
+label 'myeloid', and then run the main pipeline on this new subsetted
+object.
+
+When you get to the cell annotation part, please use this vector of
+myeloid gene markers (copy and paste in code when needed).
+
+    c('CD14','HLA-DRA','ITGAX','ITGAM','APOE','LYZ','CLU','CPA3','TPSAB1')
+
+### Answer
+
+```{r fig.height=5, fig.width=7}
+# main pipeline
+myeloid <- subset(merged_ob, subset = annote_1 == 'myeloid')
+
+myeloid <- NormalizeData(myeloid, verbose = F)
+
+myeloid <- FindVariableFeatures(myeloid, selection.method = 'vst', nfeatures = 2000, verbose = F)
+
+myeloid <- ScaleData(myeloid, vars.to.regress = 'nCount_RNA', verbose = F) 
+
+myeloid <- RunPCA(object = myeloid, features = VariableFeatures(myeloid), 
+                nfeatures.print = 5, verbose = F)
+pct <- myeloid@reductions$pca@stdev / sum(myeloid@reductions$pca@stdev) * 100 
+cum <- cumsum(pct) 
+co1 <- which(cum > 90 & pct < 5)[1] 
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > .1), decreasing = T)[1] + 1
+pcs <- min(co1, co2) # 13 pcs
+
+myeloid <- RunHarmony(myeloid, group.by.vars = c('sample_id'), dims.use = 1:pcs, verbose = F)
+
+myeloid <- FindNeighbors(myeloid, dims = 1:pcs, k.param = 20, reduction = 'harmony', verbose = F)
+myeloid <- FindClusters(myeloid, verbose = F)
+myeloid$harmony_clusters <- Idents(myeloid)
+
+myeloid <- RunUMAP(myeloid, dims = 1:pcs, reduction = 'harmony', reduction.name = 'umap_harmony', verbose = F)
+DimPlot(myeloid, group.by = 'harmony_clusters', reduction = 'umap_harmony')
+
+```
+
+```{r fig.height=5, fig.width=10}
+# cell annotation
+DotPlot(myeloid, features = c('CD14','HLA-DRA','ITGAX','ITGAM','APOE','LYZ','CLU','CPA3','TPSAB1'))
+
+```
+
+<br>
+
+Annotations:
+
+-   0 = macrophage
+-   1 = macrophage
+-   2 = granulocyte
+-   3 = macrophage
+-   4 = mast
+-   5 = macrophage
+-   6 = macrophage
+-   7 = granulocyte
+-   8 = macrophage
+-   9 = myeloid
+-   10 = granulocyte
+-   11 = macrophage
+-   12 = granulocyte
+-   13 = myeloid
+
+<br>
+
+```{r fig.height=5, fig.width=7}
+new_clusters <- c('macrophage','macrophage','granulocyte','macrophage','mast','macrophage','macrophage','granulocyte', 'macrophage','myeloid', 'granulocyte','macrophage','granulocyte','myeloid')
+names(new_clusters) <- 0:13
+myeloid <- RenameIdents(myeloid, new_clusters)
+myeloid$annote_1 <- Idents(myeloid)
+
+DimPlot(myeloid, reduction = 'umap_harmony', group.by = 'annote_1')
+
+```
+
+```{r fig.height=5, fig.width=7}
+# transfer myeloid labels to whole dataset
+# get the new myeloid labels from the myeloid object 
+x <- FetchData(myeloid, vars = c('annote_1'))
+y <- WhichCells(merged_ob, expression = annote_1 == 'myeloid')
+x <- x[y,,drop=F]
+
+# create a new annotation column in the metadata slot
+merged_ob$annote_2 <- as.character(merged_ob$annote_1)
+
+# add the new fibroblast labels to the new annotation column
+merged_ob$annote_2[y] <- as.character(x$annote_1)
+
+# plot UMAP with new labels
+DimPlot(merged_ob, reduction = 'umap_harmony', group.by = 'annote_2')
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Pathway Analysis
+
+Pathway analysis is a way to analyze groups of related genes between
+conditions. This helps to interpret large gene lists into biological
+conditions. There are three types of pathway analyses:
+
+1)  Over-representation analysis (ORA)
+2)  Functional class scoring (FCS)
+3)  Pathway-topology based (PTB)
+
+For this workshop, we will only be learning how to run ORA and FCS
+(which we'll use GSEA). We will be using the clusterProfiler package to
+run these two analyses. You can look at the manual for more functions:
+
+-   <http://yulab-smu.top/clusterProfiler-book/>
+
+<br>
+
+**Before we can actually run analyses, we need to prepare some data.**
+
+We first refresh our object (from changes from subtyping) to look at the
+cell type labels from the *'annote_1'* column from the metadata slot.
+
+```{r}
+# import object and make sure active identity is 'annote_1'
+Idents(merged_ob) <- 'annote_1'
+levels(merged_ob)
+
+```
+
+<br>
+
+We will then run DE on cells from a specific cell type between the
+conditions (N vs. P). We will be running DE on the myeloid cells for
+this example.
+
+Based on this comparison:
+
+-   positive (+) FC = expressed higher in N
+-   negative (-) FC = expressed lower in N
+
+```{r}
+# run DE between N vs. P conditions for myeloid cells
+de <- FindMarkers(merged_ob, ident.1 = 'N', ident.2 = 'P', group.by = 'condition', subset.ident = 'myeloid')
+de_filt <- de %>% rownames_to_column('gene') %>% dplyr::filter(p_val_adj < .05) %>% arrange(-avg_log2FC)
+
+```
+
+<br>
+
+We will then calculate log2 fold changes between the condition (N vs. P)
+for myeloid cells. This will output a table of fold changes for all
+genes found in the object. These fold changes will mainly be used with
+GSEA.
+
+```{r}
+# calculate log2 fold changes for all genes
+## mainly used for GSEA
+# ?FoldChange
+fc <- FoldChange(merged_ob, ident.1 = 'N', ident.2 = 'P', group.by = 'condition', subset.ident = 'myeloid')
+fc <- fc %>% rownames_to_column('gene')
+
+```
+
+<br>
+
+We will then convert gene names to IDs from certain databases (Ensembl,
+Entrez, ALIAS, etc.). We will be converting gene symbols to Entrez IDs.
+You could also use gene aliases, but it will give you multiple names for
+the same gene. Also, make sure you are using the correct species. In
+this example, we will use the human databases.
+
+```{r}
+# key names for the different IDs
+keytypes(org.Hs.eg.db)
+
+# get Entrez ID for all genes
+# ?bitr
+bitr_df <- bitr(fc$gene, fromType = 'SYMBOL', toType = 'ENTREZID', OrgDb = org.Hs.eg.db)
+
+# add Entrez IDs to fold change and DE tables
+fc$entrezid <- bitr_df$ENTREZID[match(fc$gene, bitr_df$SYMBOL)]
+de_filt$entrezid <- bitr_df$ENTREZID[match(de_filt$gene, bitr_df$SYMBOL)]
+
+```
+
+------------------------------------------------------------------------
+
+## ORA
+
+With ORA, we can find potentially important pathways through the
+proportion of genes present in certain pathways. We can run ORA on
+multiple pathway databases, such as GO, KEGG, Reactome, MSigDB, etc. For
+this example, we will be running the myeloid cells on the GO terms and
+MSigDB.
+
+The first step is to choose genes that are potentially important. We
+will use the DE table to find these genes. We will pick the DE genes
+that are significant between our conditions (adjusted p-value \< .05)
+and have an avg_log2FC \>= 1 or \<= -1. Picking these thresholds can be
+subjective, so you can change the p-value or avg_log2FC or create a
+score based on these two variables. You will need to make two lists: one
+for upregulated genes (FC \>= 1) and another for downregulated genes (FC
+\<= -1).
+
+```{r}
+# get upregulated genes
+or_genes_up <- de_filt$entrezid[de_filt$avg_log2FC >= 1 & !is.na(de_filt$entrezid)]
+head(or_genes_up)
+
+# get downregulated genes
+or_genes_down <- de_filt$entrezid[de_filt$avg_log2FC <= -1 & !is.na(de_filt$entrezid)]
+head(or_genes_down)
+
+```
+
+<br>
+
+After getting the genes, we can run pathway analysis. We are going to
+run the upregulated and downregulated separately on GO terms first.
+
+```{r}
+# run analysis on GO
+# ?enrichGO
+
+## upregulated pathways
+or_go_up <- enrichGO(gene = or_genes_up, universe = bitr_df$ENTREZID, OrgDb = org.Hs.eg.db, ont = 'BP', pAdjustMethod = 'BH', pvalueCutoff = 1, qvalueCutoff = 1, readable = T)
+head(or_go_up@result)
+
+## downregulated pathways
+or_go_down <- enrichGO(gene = or_genes_down, universe = bitr_df$ENTREZID, OrgDb = org.Hs.eg.db, ont = 'BP', pAdjustMethod = 'BH', pvalueCutoff = 1, qvalueCutoff = 1, readable = T)
+head(or_go_down@result)
+
+```
+
+I usually set the *'pvalueCutoff'* and *'qvalueCutoff'* parameters to
+get all the pathways (significant and not significant).
+
+<br>
+
+We are going to run the upregulated and downregulated separately on the
+hallmark pathways in MSigDB next.
+
+```{r}
+# get genes in hallmark pathways from MSigDB
+## get gene symbols and Entrez IDs
+# ?msigdbr
+m_df <- msigdbr(species = 'Homo sapiens', category = 'H') %>% dplyr::select(gs_name, entrez_gene)
+
+# run analysis on hallmark pathways
+## upregulated pathways
+or_msigdb_h_up <- enricher(or_genes_up, TERM2GENE = m_df, universe = bitr_df$ENTREZID, pAdjustMethod = 'BH', pvalueCutoff = 1, qvalueCutoff = 1)
+### replace entrez ids with gene symbols
+or_msigdb_h_up@result$geneID <- sapply(or_msigdb_h_up@result$geneID, function(i) {
+      y <- strsplit(i,'/')[[1]]
+      y <- bitr_df$SYMBOL[match(y,bitr_df$ENTREZID)]
+      paste(y, collapse = '/')
+    })
+head(or_msigdb_h_up@result)
+
+## downregulated pathways
+or_msigdb_h_down <- enricher(or_genes_down, TERM2GENE = m_df, universe = bitr_df$ENTREZID, pAdjustMethod = 'BH', pvalueCutoff = 1, qvalueCutoff = 1)
+### replace entrez ids with gene symbols
+or_msigdb_h_down@result$geneID <- sapply(or_msigdb_h_down@result$geneID, function(i) {
+      y <- strsplit(i,'/')[[1]]
+      y <- bitr_df$SYMBOL[match(y,bitr_df$ENTREZID)]
+      paste(y, collapse = '/')
+    })
+head(or_msigdb_h_down@result)
+
+```
+
+<br>
+
+There are also functions in clusterProfiler to run KEGG
+(*enrichKEGG()*), Reactome (*enrichPathway()*; need the ReactomePA
+package), etc. For MSigDB, we can also run on other categories (ex: C1,
+C2, C3, etc.), which you can change with the *msigdbr()* function.
+
+------------------------------------------------------------------------
+
+## GSEA
+
+GSEA is a type of FCS pathway analysis, which it uses gene expression
+unlike ORA. We can run GSEA on multiple pathway databases, such as GO,
+KEGG, Reactome, MSigDB, etc. For this example, we will be running the
+myeloid cells on the GO terms and MSigDB.
+
+The first step is setup the gene list. In GSEA, we want to use all the
+genes that change in expression between condition (abs(expression) \>
+0). We could change what we consider as expressed (ex: abs(expression)
+\> 0.5). We also need to order the gene list so that the genes go from
+most positive FC to the most negative FC. We could use p-values or some
+other score to order the genes instead if wanted.
+
+```{r}
+# get FCs and order the gene list
+gene_list <- fc %>% arrange(-avg_log2FC) %>% filter(abs(avg_log2FC) > 0) %>% dplyr::select(entrezid,avg_log2FC) %>% tibble::deframe()
+head(gene_list)
+
+```
+
+<br>
+
+We can then run GSEA. We will run the myeloid cells on GO terms first.
+
+```{r}
+# run GSEA on GO terms
+# ?gseGO
+gsea_go <- gseGO(gene_list, keyType = 'ENTREZID', OrgDb = org.Hs.eg.db, ont = 'BP', pAdjustMethod = 'BH', pvalueCutoff = 1)
+## replace entrez ids with gene symbols
+gsea_go@result$core_enrichment <- sapply(gsea_go@result$core_enrichment, function(i) {
+      y <- strsplit(i,'/')[[1]]
+      y <- bitr_df$SYMBOL[match(y,bitr_df$ENTREZID)]
+      paste(y, collapse = '/')
+    })
+head(gsea_go@result)
+
+## upregulated pathways
+gsea_go_up <- gsea_go@result %>% filter(p.adjust < .05 & NES > 0) %>% arrange(-NES)
+head(gsea_go_up)
+
+## downregulated pathways
+gsea_go_down <- gsea_go@result %>% filter(p.adjust < .05 & NES < 0) %>% arrange(NES)
+head(gsea_go_down)
+
+```
+
+<br>
+
+We will run the myeloid cells on MSigDB next.
+
+```{r}
+# get genes in hallmark pathways from MSigDB
+m_df <- msigdbr(species = 'Homo sapiens', category = 'H') %>% dplyr::select(gs_name, entrez_gene)
+
+# run GSEA on hallmark pathways
+# ?GSEA
+gsea_msigdb_h <- GSEA(gene_list, TERM2GENE = m_df, pAdjustMethod = 'BH', pvalueCutoff = 1)
+gsea_msigdb_h@result$core_enrichment <- sapply(gsea_msigdb_h@result$core_enrichment, function(i) {
+      y <- strsplit(i,'/')[[1]]
+      y <- bitr_df$SYMBOL[match(y,bitr_df$ENTREZID)]
+      paste(y, collapse = '/')
+    })
+head(gsea_msigdb_h@result)
+
+## upregulated pathways
+gsea_msigdb_h_up <- gsea_msigdb_h@result %>% filter(p.adjust < .05 & NES > 0) %>% arrange(-NES)
+head(gsea_msigdb_h_up)
+
+## downregulated pathways
+gsea_msigdb_h_down <- gsea_msigdb_h@result %>% filter(p.adjust < .05 & NES < 0) %>% arrange(NES)
+head(gsea_msigdb_h_down)
+
+```
+
+<br>
+
+There are also functions in clusterProfiler to run KEGG (*gseKEGG()*),
+Reactome (*gsePathway()*; need the ReactomePA package), etc. For MSigDB,
+we can also run on other categories (ex: C1, C2, C3, etc.), which you
+can change with the *msigdbr()* function.
+
+------------------------------------------------------------------------
+
+## Plots
+
+There are couple of plots that we could use to visualize our pathways.
+We will only go over a few plots, but other plots can be found in the
+clusterProfiler manual.
+
+We will be going over 2 types of plots in this workshop. The bar and dot
+plots can be used for both ORA and GSEA results. Even though there are
+functions to make these plots in clusterProfiler, they are a bit buggy.
+Instead we will be using custom code with *ggplot()* to create these
+plots.
+
+------------------------------------------------------------------------
+
+### Bar plot
+
+#### ORA
+
+```{r fig.height=5, fig.width=15}
+# GO (upregulated)
+data <- or_go_up@result %>% arrange(-Count)
+data <- data[1:10,]
+
+data %>% ggplot(aes(Count, reorder(Description,Count), fill = qvalue)) + geom_bar(stat='identity') + theme_bw() + theme(axis.title.y = element_blank()) 
+
+```
+
+```{r fig.height=5, fig.width=9}
+# MSigDB Hallmark (upregulated)
+data <- or_msigdb_h_up@result %>% arrange(-Count)
+data <- data[1:10,]
+
+data %>% ggplot(aes(Count, reorder(Description,Count), fill = qvalue)) + geom_bar(stat='identity') + theme_bw() + theme(axis.title.y = element_blank()) 
+
+```
+
+#### GSEA
+
+```{r fig.height=5, fig.width=9}
+# GO (upregulated)
+data <- gsea_go@result %>% arrange(-NES)
+data <- data[1:10,]
+
+data %>% ggplot(aes(NES, reorder(Description,NES), fill = qvalues)) + geom_bar(stat='identity') + theme_bw() + theme(axis.title.y = element_blank()) 
+
+```
+
+```{r fig.height=5, fig.width=9}
+# MSigDB Hallmark (upregulated)
+data <- gsea_msigdb_h@result %>% arrange(-NES)
+data <- data[1:10,]
+
+data %>% ggplot(aes(NES, reorder(Description,NES), fill = qvalues)) + geom_bar(stat='identity') + theme_bw() + theme(axis.title.y = element_blank()) 
+
+```
+
+------------------------------------------------------------------------
+
+### Dot plot
+
+#### ORA
+
+```{r fig.height=5, fig.width=15}
+# GO (upregulated)
+data <- or_go_up@result %>% arrange(-Count)
+data <- data[1:10,]
+
+data %>% ggplot(aes(Count, reorder(Description, Count), color=qvalue, size=Count)) + geom_point(size = 5) + theme_bw() + theme(axis.title.y = element_blank())
+
+```
+
+```{r fig.height=5, fig.width=9}
+# MSigDB Hallmark (upregulated)
+data <- or_msigdb_h_up@result %>% arrange(-Count)
+data <- data[1:10,]
+
+data %>% ggplot(aes(Count, reorder(Description, Count), color=qvalue, size=Count)) + geom_point(size = 5) + theme_bw() + theme(axis.title.y = element_blank())
+
+```
+
+#### GSEA
+
+```{r fig.height=5, fig.width=9}
+# GO (upregulated)
+data <- gsea_go@result %>% arrange(-NES)
+data <- data[1:10,]
+
+data %>% ggplot(aes(NES, reorder(Description, NES), color=qvalues, size=NES)) + geom_point(size = 5) + theme_bw() + theme(axis.title.y = element_blank())
+
+```
+
+```{r fig.height=5, fig.width=9}
+# MSigDB Hallmark (upregulated)
+data <- gsea_msigdb_h@result %>% arrange(-NES)
+data <- data[1:10,]
+
+data %>% ggplot(aes(NES, reorder(Description, NES), color=qvalues, size=NES)) + geom_point(size = 5) + theme_bw() + theme(axis.title.y = element_blank())
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Session Info
+
+```{r}
+sessionInfo()
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>

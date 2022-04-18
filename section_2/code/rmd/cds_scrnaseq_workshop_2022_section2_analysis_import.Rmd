@@ -1,0 +1,582 @@
+---
+title: "CDS scRNA-seq Workshop 2022 Section 2 - Importing and Creating Seurat Objects"
+author: "Stephanie The"
+date: '2022-04-06'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Packages
+
+At the start of your session, always load in your packages! If you
+haven't installed a package, you can run this code in console:  
+
+[For CRAN packages:]{.underline}  
+
+    list.of.packages <- c('tidyverse','Seurat','SeuratObject','pheatmap','RColorBrewer','scales','cowplot','patchwork','grid','gridExtra','harmony','knitr','rmarkdown','BiocManager')  
+    new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]  
+    if(length(new.packages)) install.packages(new.packages)  
+
+[For Bioconductor packages:]{.underline}  
+
+    install.packages('BiocManager') # if haven't installed this package  
+    BiocManager::install(c('clusterProfiler','org.Hs.eg.db','ReactomePA','msigdbr'))  
+
+**Load in packages:**  
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(RColorBrewer)
+library(scales)
+library(cowplot)
+library(patchwork)
+library(grid)
+library(gridExtra)
+library(harmony)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ReactomePA)
+library(msigdbr)
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Introduction to Some R Coding
+
+**Data Values/Elements:**
+
+-   numeric = integers and decimals/doubles
+    -   integers = 0, 1, 2, ... 100
+    -   decimals/doubles = 0.5, 1.0, 1.5, ... 101.23
+
+```{r}
+is.numeric(c(1,2,3))
+is.numeric(c(0.5, 1.0, 1.5, 101.23))
+
+```
+
+-   character/string = letters/punctuation, words, and sentences
+    -   letters/punctuation = 'a', 'b', 'c', '!'
+
+```{r}
+is.character(c('a', 'b', 'c', '!'))
+
+```
+
+-   words = 'hello', 'world'
+    -   words needs to be surrounded by quotes (either by single quotes
+        or double quotes)
+    -   ex: 'word', "word"
+
+```{r}
+is.character(c("hello", "world"))
+is.character(c('hello', 'world'))
+
+```
+
+-   sentences = 'hello world!'
+    -   whole sentence needs to be surrounded by quotes
+
+```{r}
+is.character('hello world!')
+
+```
+
+-   logical/boolean = TRUE or FALSE
+    -   have to be all in uppercase if write the whole word out
+    -   can also write as: T = TRUE F = FALSE
+
+```{r}
+is.logical(TRUE)
+is.logical(FALSE)
+
+is.logical(T)
+is.logical(F)
+
+```
+
+------------------------------------------------------------------------
+
+**Data Types:**
+
+-   vector = object that contains one type of data values
+    -   c() = vector function
+    -   ex: c(1, 2, 3, 4) is a vector of integers
+    -   advise against combining different types of data values
+        -   ex: c('hello', 5) will end up as c('hello', '5')
+
+```{r}
+c(1, 2, 3, 4)
+1:4
+c('hello', 5)
+
+```
+
+-   factor = object that categorizes data values
+    -   factor() = factor function
+    -   ex: factor(c(1,2,1,2,3,3,4)) will give you a factored vector
+        -   will group vector elements as 1,2,3,4
+    -   factoring sometimes doesn't work with some functions
+        -   as.numeric() or as.character() functions will help to undo
+            the factor
+
+```{r}
+factor(c(1,2,1,2,3,3,4))
+as.numeric(factor(c(1,2,1,2,3,3,4)))
+
+```
+
+-   list = object that contains different types of data values
+    -   list() = list function
+    -   ex: list('hello', 1)
+    -   can even put in different data types
+        -   ex: list(var1 = c(1,2,3), var2 = list(c('hello','world')))
+
+```{r}
+list('hello', 1)
+
+list(var1 = c(1,2,3), var2 = list(c('hello','world')))
+
+```
+
+-   matrix = object that contains one type of data value in a 2D
+    rectangular layout
+    -   matrix() = matrix function
+    -   will be rows x columns
+
+```{r}
+matrix(sample(1:10, size = 16, replace = T), nrow = 4, ncol = 4)
+matrix(sample(c('a','b','c'), size = 16, replace = T), nrow = 4, ncol = 4)
+
+```
+
+-   data.frame = object that contains different types of data values in
+    a 2D rectangular layout
+    -   data.frame() = data.frame function
+    -   will be rows x columns
+    -   one column must contain the same type of data values
+
+```{r}
+x <- data.frame(var1 = 1:4, var2 = c('a','b','c','d'), var3 = c(T,T,F,F))
+x
+
+str(x)
+```
+
+------------------------------------------------------------------------
+
+**Best coding style practices:**
+
+-   can read for best practices here =
+    <https://www.datanovia.com/en/blog/r-coding-style-best-practices/>
+
+------------------------------------------------------------------------
+
+**Coding structure:**
+
+-   var \<- operation
+    -   var = variable
+    -   operation = operation/function
+    -   the output from the operation will be stored in a variable
+        -   will be able to see variable in Environment window in
+            RStudio (top-right window)
+-   might also see = used instead of \<-
+    -   can use both but using \<- is better for formatting purposes (in
+        my opinion)
+
+```{r}
+x <- 1+1
+x
+
+```
+
+------------------------------------------------------------------------
+
+**Functions:**
+
+-   set of statements organized together to perform a specific task
+    -   prevents having to duplicate large blocks of code
+    -   cleans up script
+-   how to use already made function:
+    -   var \<- function(x = mat, par1 = 1, par2 = 'S')
+        -   x = object parameter
+        -   par1 = parameter 1
+        -   par2 = parameter 2
+        -   var = variable that stores output from function
+-   find more information about function:
+    -   ?function
+-   don't need to specify parameters if put values in order
+    -   var \<- function(mat, 1, 'S')
+
+```{r}
+x <- sample(1:10, 16, T)
+x 
+
+# same as these:
+# sample(x = 1:10, size = 16, replace = T)
+# sample(1:10, replace = T, size = 16)
+
+```
+
+------------------------------------------------------------------------
+
+**Loops:**
+
+-   way to do run block of code multiple times
+    -   prevents having to duplicate code
+    -   cleans up script
+-   for loop
+    -   for (i in 1:10) { i+1 }
+-   apply loop
+    -   similar to for loop but more compact function
+    -   use for simple operations (mainly that can be done in one line)
+    -   can use easily on matrices and data.frames
+    -   multiple functions = apply, sapply, lapply, mapply, etc.
+        -   apply(X = mat, MARGIN = 1, FUN = function(i) i+1)
+            -   works well with matrices and data.frames
+        -   sapply(X = 1:10, FUN = function(i) i+1)
+            -   works well with vectors and lists also applies to
+                lapply, mapply, etc.
+
+```{r}
+for (i in 1:10) {
+  print(i+1)
+}
+
+sapply(1:10, function(i) i+1)
+
+```
+
+------------------------------------------------------------------------
+
+**Packages:**
+
+-   collection of functions in R
+    -   easy way to share code
+    -   stored as libraries in environment
+-   how to install packages
+    -   from CRAN = install.packages()
+    -   from Bioconductor = BiocManager::install()
+-   how to load packages
+    -   library()
+    -   can address packages directly in the code
+        -   ex: tidyverse::read_csv()
+
+------------------------------------------------------------------------
+
+**Rmarkdown (rmd) files:**
+
+-   format file that allows for reproducible reports
+    -   makes it easy to organize code and share with others
+    -   can combine both regular text, code, and plots together in one
+        document
+    -   can create outline to quickly jump around code
+-   would recommend using rmd!
+-   manual for Rmarkdown: <https://bookdown.org/yihui/rmarkdown/>
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Setup
+
+## Import and Create Objects
+
+Before starting running analysis, we will set the seed, which is
+important to make our results consistent for certain functions. We will
+also set the working directory, which is where R will be looking at to
+find and save files. Normally you can run the *setwd()* function in
+order to set the working directory. We have to run the
+knitr:opts_knit\$set code so we don't get an error about the working
+directory from the Rmarkdown.
+
+```{r}
+# set seed (for consistent results)
+set.seed(1383)
+
+```
+
+```{r}
+# set working directory 
+## copy and paste and enter in console
+# setwd('D:/scRNA-seq pipeline/pasca_dataset/')
+
+```
+
+```{r echo=FALSE}
+# DO NOT RUN
+knitr::opts_knit$set(root.dir = normalizePath('D:/scRNA-seq pipeline/pasca_dataset/'))
+
+```
+
+<br>
+
+After setting the seed and working directory, we will import the
+metadata table. I made this table in excel and saved it as a .csv file.
+
+Here is the description of the columns in the metadata table:
+
+-   sample_id = name of sample
+-   condition = condition of sample (either normal [N] or PDAC [P])
+-   path = path to samples' counts matrix
+
+```{r}
+# import metadata table
+metadata <- read_csv(paste0('data/metadata.csv'))
+metadata
+
+```
+
+<br>
+
+After importing the metadata table, we will then import the counts
+matrices and create Seurat objects from these count matrices. There are
+multiple importing functions in Seurat: *Read10X()*, *Read10X_h5()*,
+etc.
+
+Let's do this with one counts matrix first with the code below:
+
+```{r}
+# make full path to filtered counts matrix for AdjNorm_TISSUE_1 sample
+file <- paste0('data/',metadata$path[1], 'filtered_feature_bc_matrix/')
+file 
+
+```
+
+```{r}
+# import counts matrix for AdjNorm_TISSUE_1 sample
+# ?Read10X
+counts <- Read10X(file)
+
+# structure of counts matrix = genes x cells
+counts[1:5,1:5]
+```
+
+<br>
+
+In the *CreateSeuratObject()* function, we have some important filtering
+parameters:
+
+-   **min.cells** = genes that are present in at least a n cells (filters
+    genes)
+-   **min.features** = cells that are expressed in at least n genes (filters
+    cells)
+
+```{r}
+# create Seurat object for AdjNorm_TISSUE_1 sample
+# ?CreateSeuratObject
+ob <- CreateSeuratObject(counts, project = 'pasca', min.cells = 3, min.features = 100)
+
+```
+
+<br>
+
+If you have multiple counts matrices, then you can do this process with
+a for loop. The code below is a custom code I made to do this:
+
+```{r, message=FALSE, warning=FALSE}
+# semi-automatic version
+## import counts matrix and make create Seurat object for each sample with a loop
+obs <- sapply(1:nrow(metadata), function(i) 
+  CreateSeuratObject(
+    Read10X(
+      paste0('data/',metadata$path[i], 'filtered_feature_bc_matrix/')),
+    project = 'pasca', min.cells = 3, min.features = 100)
+)
+names(obs) <- metadata$sample_id
+
+obs
+
+```
+
+<br>
+
+The output you will get from this for loop will be a list of Seurat
+objects, which each object is a specific sample from the dataset. We
+could combine the objects together into one object if we wanted to, but
+we will leave them separate for downstream analyses.
+
+```{r, message=FALSE, warning=FALSE}
+# could combine objects together right after creating them
+# DO NOT RUN
+
+# long form:
+# merge(obs[[1]], c(obs[[2]], obs[[3]], obs[[4]], obs[[5]], obs[[6]]), add.cell.ids = metadata$sample_id)
+
+# short, automatic form:
+# more_obs <- paste0("c(",paste(sapply(2:length(obs),function(i) paste0("obs[[",i,"]]")),collapse=",",sep=""),")")
+# merged_ob <- merge(obs[[1]], eval(parse(text=more_obs)), add.cell.ids = metadata$sample_id)
+
+```
+
+<br>
+
+We can look at the \# of cells in each sample object with the code
+below:
+
+```{r}
+# calculate total # of cells per object
+sample_cell_n_all <- unlist(sapply(obs, function(x) ncol(x)))
+sample_cell_n_all
+
+```
+
+------------------------------------------------------------------------
+
+## The Inner Workings of the Seurat Object
+
+Here are some important slots that are in a Seurat object:
+
+-   **assays**: contains different single-cell assay experimental data (ex:
+    RNA, ATAC, etc.)
+    -   **counts**: raw counts
+    -   **data**: data worked on (this is be normalized data)
+    -   **scale.data**: scaled data
+    -   **var.features**: variable features (found through
+        FindVariableFeatures)
+-   **meta.data**: metadata; can include categorical and numerical data
+-   **active.assay**: current assay slot used
+-   **active.ident**: current metadata/identity used
+-   **graphs**: contains KNN and SNN graphs (from FindNeighbors)
+-   **reductions**: contains PCA, TSNE, and UMAP data
+
+------------------------------------------------------------------------
+
+## Adding Metadata
+
+We will now add the information from the metadata table we imported
+earlier into each sample object. First we can decide which
+variables/columns to put into the objects with the code below:
+
+```{r}
+# look at metadata variables
+colnames(metadata)
+
+# only using sample_id and condition variables
+metadata_col <- colnames(metadata)[-3]
+
+```
+
+<br>
+
+If look into the metadata slot in an object before adding more
+variables, we see that there are already some variables in there. They
+were added when using the *CreateSeuratObject()* function.
+
+-   orig.ident = names of project cells are from
+-   nCount_RNA = total \# of molecules detected within a cell
+-   nFeature_RNA = total \# of genes detected in each cell
+
+```{r}
+# look into metadata slot in object
+head(ob@meta.data)
+
+```
+
+<br>
+
+There are a few ways you can add new metadata into the objects. The
+first way is to add each metadata variable one-by-one into an object:
+
+```{r}
+# Method 1: adding metadata variables one by one for an object
+ob$sample_id <- metadata$sample_id[1]
+ob$condition <- metadata$condition[1]
+
+head(ob@meta.data)
+
+```
+
+<br>
+
+The first way can make the process cumbersome and make the code messy if
+you are dealing with multiple objects, so we can do it the second way,
+which is to add all the metadata into an object:
+
+```{r, eval=FALSE, message=FALSE, warning=FALSE}
+# Method 2: adding all metadata variables to an object
+
+## create additional metadata table
+### contains labels for every cell in object
+metadata_full <- data.frame(cell = colnames(ob))
+for (col in metadata_col) {
+  temp <- rep(metadata[1,col,drop=T], times = ncol(ob))
+  metadata_full <- cbind(metadata_full, temp)
+}
+metadata_full <- metadata_full %>% column_to_rownames("cell")
+colnames(metadata_full) <- metadata_col
+
+## add full metadata table to object
+# ?AddMetaData
+ob <- AddMetaData(ob, metadata = metadata_full)
+
+```
+
+<br>
+
+In order to make this even easier, we can do it the third way, which is
+to add all the corresponding metadata into each object with a for loop:
+
+```{r}
+# Method 3: adding all metadata variables for multiple objects
+## similar to method 2, but wrapped in for loop
+
+for (i in 1:length(obs)) {
+  metadata_full <- data.frame(cell = colnames(obs[[i]]))
+  for (col in metadata_col) {
+    temp <- rep(metadata[i,col,drop=T], times = sample_cell_n_all[i])
+    metadata_full <- cbind(metadata_full, temp)
+  }
+  metadata_full <- metadata_full %>% column_to_rownames("cell")
+  colnames(metadata_full) <- metadata_col
+  obs[[i]] <- AddMetaData(obs[[i]], metadata_full)
+}
+
+head(obs[[4]]@meta.data)
+
+```
+
+<br>
+
+This is just to setup for the next part of the workshop, but we will
+remove the *ob* variable. We will also save the list of Seurat objects
+in a .rds file. **Saving objects outside of the R session will help you
+immensely if you made a mistake (acts like a checkpoint) and for sharing
+with others.**
+
+```{r, eval=FALSE}
+# remove "ob" variable
+rm(ob)
+
+# save Seurat object
+## just as a checkpoint
+saveRDS(obs, 'pasca_raw_objects.rds')
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Session Info
+
+```{r}
+sessionInfo()
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>

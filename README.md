@@ -44,12 +44,15 @@ https://github.com/tstephie/UMICH-CDS-SR-scRNA-seq-Workshop-2022/blob/main/secti
 
 ### Day 2 (9:00am - 12:00pm):
 #### Section 2: Lab
-| Time | Activity |
-| ---- | -------- |
-| 9:00am - 9:00am | QC and Filtering |  
-| 9:00am - 9:00am	| Standard Pipeline |  
-| 9:00am - 9:00am	| Integration Pipeline |  
-| 9:00am - 9:00am	| Cell Annotation | 
-| 9:00am - 9:00am	| Cell Subpopulation Analysis |
-| 9:00am - 9:00am	| Pathway Analysis |
+
+All day will be lab!
+
+| Activity |
+| -------- |
+| QC and Filtering |  
+| Standard Pipeline |  
+| Integration Pipeline |  
+| Cell Annotation | 
+| Cell Subpopulation Analysis |
+| Pathway Analysis |
 

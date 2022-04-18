@@ -1,0 +1,428 @@
+---
+title: "CDS scRNA-seq Workshop 2022 Section 2 - Cell Annotation"
+author: "Stephanie The"
+date: '2022-04-06'
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+editor_options: 
+  markdown: 
+    wrap: 72
+  chunk_output_type: console
+---
+
+# Packages
+
+**If you are starting a new session, you will need to reload the
+packages and run the code below:**
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(Seurat)
+library(pheatmap)
+library(RColorBrewer)
+library(scales)
+library(cowplot)
+library(patchwork)
+library(grid)
+library(gridExtra)
+library(harmony)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ReactomePA)
+library(msigdbr)
+
+```
+
+```{r}
+# set working directory 
+setwd('D:/scRNA-seq pipeline/pasca_dataset/')
+
+# load Harmony object
+merged_ob <- readRDS('cds_pasca_example_umap_harmony_032322.rds')
+
+```
+
+We will be using the harmony clusters from the Harmony integrated objected for cell annotation.  
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Cell Annotations
+
+Cell annotating is the step where we define the clusters as cell types. Remember, this is a subjective process, and you might have a different approach to this. I will show you how I normally annotate my clusters.   
+
+The ideal workflow for annotating is:  
+
+Automated --> Manual --> Validation  
+
+For this workshop, we will only be going through the manual method of annotating clusters.  
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Manual Method
+
+------------------------------------------------------------------------
+
+## Gene Markers List
+
+The first step for the manual way is to get gene markers for potential cell types. The gene markers I will be using are from the article that this example dataset is from. The dot plot below is from the article:  
+
+```{r}
+# DO NOT RUN (only for html)
+knitr::include_graphics('pasca_gene_markers_dotplot.png', error = F)
+
+```
+
+The cell types we will be using for this example are (I have combined some labels from the article's cell types):
+
+- epithelial
+- acinar
+- endocrine
+- endothelial
+- myeloid (mast, granulocyte, macrophage)
+- DC (dendritic cell)
+- T (CD4 T, T Reg, CD8 T)
+- NK
+- B (B/plasma cell)
+- fibroblasts (iCAF, myCAF)
+
+------------------------------------------------------------------------
+
+## Expression Plots
+
+The second step is to look at expression plots. With a gene markers list, we can make a lot of different types of plots.  
+
+```{r}
+# list of gene markers
+genes <- c('TFF1','KRT18','KRT19','SPINK1','KRT8','MKI67','CLU','MMP7','SPP1','REG1A','CTRB2','PRSS1','DCN','LUM','CPA3','TPSAB1','CDH5','VWF','PLVAP','IRF7','COL3A1','COL1A1','PDGFRB','CDH11','ACTA2','CD3E','NCAM1','NKG7','CD3D','CD14','HLA-DRA','GZMB','LAMP3','CCL22','ITGAX','ITGAM','APOE','LYZ','IGJ','CD79A','MS4A1')
+
+```
+
+------------------------------------------------------------------------
+
+### Dot plot
+
+This plot is useful to look at gene expression across different groups. The important parts of the plot are:  
+
+  - x-axis = features/genes
+  - y-axis = identity classes (cluster #, condition, etc.)
+  - dot color = average expression across all cells with a group for a gene
+  - dot size = % cells with a group where the normalized expression > 0 for a gene
+
+```{r fig.height=7, fig.width=13}
+# ?DotPlot
+
+DotPlot(merged_ob, features = genes, group.by = 'harmony_clusters') + RotatedAxis()
+
+```
+
+Example Interpretation:
+
+- For cluster 0:
+  - For KRT18, the dot is size is very small and the dot color is gray => not expressed by any cell
+  - For CD3E and CD3D, the dot size is very large and the dot color is very blue => highly expressed by the majority of cells
+  - For NKG7, the dot size is large and the dot color is light purple => lowly expressed by a good amount of cells
+
+We can pretty much annotate all the clusters with a dot plot, but let's look at a few other plots!  
+
+------------------------------------------------------------------------
+
+### Feature plot
+
+This plot is useful to look at feature expression (gene, scores, etc.) on a dimensional reduction plot. This allows you to look at where the expression is localized.  
+
+```{r fig.height=7, fig.width=7}
+# ?FeaturePlot
+
+FeaturePlot(merged_ob, features = c('CD3E','CD4','CD8A','NKG7','NCAM1'), ncol = 2, reduction = 'umap_harmony')
+
+```
+
+Example Interpretation:  
+
+(also bring up harmony cluster UMAP)  
+
+- For cluster 0:  
+  - majority of the cells in the cluster expresses CD3E, CD8A, and NKG7 and doesn't expresses CD4
+
+------------------------------------------------------------------------
+
+### Violin plot
+
+This plot is useful to look at the distribution of expression values for a gene across groups.  
+
+```{r fig.height=7, fig.width=12}
+# ?VlnPlot
+
+VlnPlot(merged_ob, features = c('CD3E','CD4','CD8A','NKG7','NCAM1'), group.by = 'harmony_clusters', ncol = 2)
+
+```
+
+Example Interpretation:  
+
+- For cluster 0:
+  - majority of the cells in the cluster expresses CD3E, CD8A, and NKG7 and doesn't expresses CD4
+  
+------------------------------------------------------------------------
+  
+### Ridge plot
+
+This plot is useful to look at the distribution of expression values for a gene across groups. Similar to violin plots, but as ridges and not violin shaped.  
+
+```{r fig.height=7, fig.width=10}
+# ?RidgePlot
+
+RidgePlot(merged_ob, features = c('KRT18'), ncol = 2)
+
+```
+
+Example Interpretation:  
+
+- For cluster 2:
+  - there is a large ridge around 2 for cluster 2 => expresses KRT18
+
+------------------------------------------------------------------------
+
+### Heatmap
+
+This plot is useful to look at the expression of multiple genes across multiple groups.   
+
+Seurat does have its own heatmap function which can be found below. Remember that this function requires that there are scaled values for the genes requested or it will throw a warning/error. I don't normally use this function.  
+
+```{r}
+## DO NOT RUN
+# ?DoHeatmap
+# DoHeatmap(merged_ob, features = c('TFF1','KRT18','KRT19','SPINK1','KRT8','MKI67','CLU','MMP7'), group.by = 'harmony_clusters')
+
+```
+
+<br>
+
+An alternative to the DoHeatmap function is to take the values outside of Seurat and make the heatmap with pheatmap. This is my customized code to create heatmaps, which allows for more flexibility in customizing the plot.  
+
+```{r fig.height=3, fig.width=7}
+# get the values and harmony clusters
+# ?FetchData
+
+data <- FetchData(merged_ob, vars = c('TFF1','KRT18','KRT19','SPINK1','KRT8','MKI67','CLU','MMP7','harmony_clusters'))
+
+# order values by harmony_cluster (0 -> 25)
+data <- data[order(data$harmony_clusters),]
+
+# scale values (range = (-2,2))
+df_scaled <- apply(data[,-ncol(data)], MARGIN = 2, FUN = function(x) (scales::rescale(x, to = c(-2,2))))
+rownames(df_scaled) <- rownames(data)
+
+# create annotation table
+anno <- data[,'harmony_clusters',drop=F]
+rownames(anno) <- rownames(data)
+
+# plot heatmap
+# ?pheatmap 
+
+pheatmap(t(df_scaled), cluster_rows = F, cluster_cols = F, annotation_col = anno, show_colnames = F, color = colorRampPalette(colors = c('#8A2BE2','#000000','#FFFF00'))(250))
+
+```
+
+<br>
+
+You can also add multiple annotation bars on the heatmap.  
+
+```{r fig.height=3, fig.width=7}
+# get the values and harmony clusters
+data <- FetchData(merged_ob, vars = c('TFF1','KRT18','KRT19','SPINK1','KRT8','MKI67','CLU','MMP7','harmony_clusters', 'condition'))
+
+# order values by harmony_cluster (0 -> 25)
+data <- data[order(data$harmony_clusters, data$condition),]
+
+# scale values (range = (-2,2))
+df_scaled <- apply(data[,-c(9:10)], MARGIN = 2, FUN = function(x) (scales::rescale(x, to = c(-2,2))))
+rownames(df_scaled) <- rownames(data)
+
+# create annotation table
+anno <- data[,9:10]
+rownames(anno) <- rownames(data)
+
+# plot heatmap
+pheatmap(t(df_scaled), cluster_rows = F, cluster_cols = F, annotation_col = anno, show_colnames = F, color = colorRampPalette(colors = c('#8A2BE2','#000000','#FFFF00'))(250), annotation_colors = list(condition = c('N' = 'blue', 'P' = 'red')))
+
+```
+
+------------------------------------------------------------------------
+
+## Checking DE
+
+You can also check the DE we did previously on the harmony clusters to see if you get stuck on a cluster. Looking at the top 10-20 genes can give you a good idea of what cell type the cluster is.  
+
+```{r}
+# load DE on harmony clusters
+de <- read_csv('D:/scRNA-seq pipeline/pasca_dataset/tables/cds_pasca_example_harmony_clusters_de_032422.csv')
+de_filt <- de %>% dplyr::filter(p_val_adj < .05)
+
+# get top 20 genes for each cluster
+top20_genes <- de_filt %>% group_by(cluster) %>% top_n(20, wt = avg_log2FC) %>% arrange(cluster, -avg_log2FC)
+head(top20_genes)
+
+```
+
+<br>
+
+If you don't know what a gene is, you can search for it in Google. Usually typing 'CD4 gene marker' or 'CD4 cell type' works.  
+
+You can also look at cell type databases such as:  
+
+- Human Protein Atlas = https://www.proteinatlas.org/
+- PanglaoDB = https://panglaodb.se/
+- CellMarker = http://bio-bigdata.hrbmu.edu.cn/CellMarker/
+
+------------------------------------------------------------------------
+
+## Annotating Clusters
+
+While looking at the expression plots and DE, it is a good idea to write the labels to clusters somewhere. This could be in a notebook or document or even on this Rmarkdown. An example looks like this:  
+
+- 0 = T (CD8)  
+- 1 =   
+- 2 = epithelial  
+- ...
+
+------------------------------------------------------------------------
+
+### Exercise: Annotating the Rest of the Clusters
+
+Now that we have an idea of how to annotate clusters, it's time to annotate the rest of the clusters! Feel free to use any of the plots or DE shown above to help you when annotating the clusters. If you need to look up what a gene is, please Google it.  
+
+We have already annotated cluster 0, 2, 5, and 6, so I will include those labels down below:  
+
+- 0 = T (CD8)
+- 2 = epithelial
+- 5 = myeloid (granulocyte)
+- 6 = myeloid (macrophage)
+
+------------------------------------------------------------------------
+
+### Answers:
+
+- 0 = T (CD8)
+- 1 = acinar
+- 2 = epithelial
+- 3 = T (CD4)
+- 4 = epithelial
+- 5 = myeloid (macrophage)
+- 6 = myeloid (macrophage)
+- 7 = myeloid (granulocyte)
+- 8 = fibroblast (myCAF)
+- 9 = myeloid (macrophage)
+- 10 = acinar
+- 11 = B
+- 12 = NK
+- 13 = endothelial
+- 14 = myeloid (mast)
+- 15 = epithelial
+- 16 = epithelial
+- 17 = DC
+- 18 = T (CD4)
+- 19 = none
+- 20 = fibroblast (iCAF)
+- 21 = DC
+- 22 = acinar
+- 23 = acinar
+- 24 = epithelial
+- 25 = endocrine
+
+------------------------------------------------------------------------
+
+## Adding Annotations to Object
+
+In order to plot these new cluster labels, we need to add them to the object. We can do it with the code below:  
+
+```{r fig.height=5, fig.width=7}
+# make a new vector with the labels for each cluster
+## make sure you have the same # of labels as # of harmony clusters
+## there are 26 clusters
+new_clusters <- c('T','acinar','epithelial','T','epithelial','myeloid','myeloid','myeloid','fibroblast','myeloid','acinar',
+                  'B','NK','endothelial','myeloid','epithelial','epithelial','DC','T','RBC','fibroblast','DC','acinar',
+                  'acinar','epithelial','endocrine')
+
+# name the vector with cluster #
+names(new_clusters) <- 0:25
+
+# active identity before renaming
+levels(merged_ob)
+
+# rename the clusters
+## this will replace the labels in the active identity slot
+merged_ob <- RenameIdents(merged_ob, new_clusters)
+
+# active identity after renaming
+levels(merged_ob)
+
+# save new labels (which are in the active identity slot) to metadata slot
+merged_ob$annote_1 <- Idents(merged_ob)
+
+# plot UMAP with new labels
+DimPlot(merged_ob, reduction = 'umap_harmony', group.by = 'annote_1')
+
+```
+
+<br>
+
+If you make a mistake in your labels, you can redo it with the code below:  
+
+```{r}
+# DO NOT RUN (only run if you made a mistake)
+
+# revert active identity to labels before mistake
+# Idents(merged_ob) <- 'harmony_clusters'
+
+# fix new labels
+# new_clusters <- c('T/NK','myeloid','epithelial','acinar','T/NK','myeloid','myeloid','epithelial','fibroblast','acinar','B','endothelial','T/NK','myeloid','epithelial','epithelial','T/NK','RBC','myeloid','fibroblast','acinar','endocrine','epithelial')
+
+# name the vector with cluster #
+# names(new_clusters) <- 0:25
+
+# rename clusters
+# merged_ob <- RenameIdents(merged_ob, new_clusters)
+# levels(merged_ob)
+
+# save fixed labels to metadata slot
+# merged_ob$annote_1 <- Idents(merged_ob)
+
+# plot UMAP with fixed labels
+# DimPlot(merged_ob, reduction = 'umap_harmony', group.by = 'annote_1')
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Save Object
+
+```{r eval=FALSE}
+# save new annotated Harmony integrated object
+saveRDS(merged_ob, file = 'cds_pasca_example_umap_harmony_annote_1.rds')
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+# Session Info
+
+```{r}
+sessionInfo()
+
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+<br>
