@@ -1,4 +1,4 @@
-# CDS-SR scRNA-seq Workshop 2022 (Work in Progress)
+# CDS-SR scRNA-seq Workshop 2022
 
 Welcome to the Cancer Data Science Shared Resource (CDS-SR) 2022 scRNA-seq workshop GitHub page! 
 This page contains lecture slides, coding scripts, and other documents over topics discussed in this 
@@ -16,13 +16,13 @@ https://drive.google.com/drive/folders/1T2YJcnFyNdmY8ohfN4hAu4JVgQFyZ-v2?usp=sha
 Lecture slides for Section 1 and coding scripts for both sections can be found here: 
 https://github.com/tstephie/UMICH-CDS-SR-scRNA-seq-Workshop-2022/tree/main/section_1
 
-## How to Setup Computer for Section 2 (Lab Section):
-Please take a look at the document here of how to setup R, Rstudio, and packages:  
-https://github.com/tstephie/UMICH-CDS-SR-scRNA-seq-Workshop-2022/blob/main/section_2/How%20to%20Setup%20for%20Section%202.docx
-
 ### Section 2 Coding Scripts
 Section 2's R coding scripts (.rmd and .html) can be found here:
 https://github.com/tstephie/UMICH-CDS-SR-scRNA-seq-Workshop-2022/tree/main/section_2/code
+
+## How to Setup Computer for Section 2 (Lab Section):
+Please take a look at the document here of how to setup R, Rstudio, and packages:  
+https://github.com/tstephie/UMICH-CDS-SR-scRNA-seq-Workshop-2022/blob/main/section_2/How%20to%20Setup%20for%20Section%202.docx
 
 ## Schedule (Tentative)
 
