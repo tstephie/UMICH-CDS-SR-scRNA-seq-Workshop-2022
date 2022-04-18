@@ -13,12 +13,16 @@ The example datasets used in this workshop are found in the Google Drive link he
 https://drive.google.com/drive/folders/1T2YJcnFyNdmY8ohfN4hAu4JVgQFyZ-v2?usp=sharing
 
 ### Lecture Slides and Coding Scripts
-Lecture slides for Section 1 and coding scripts for both sections can be found at this Github page here: 
+Lecture slides for Section 1 and coding scripts for both sections can be found here: 
 https://github.com/tstephie/UMICH-CDS-SR-scRNA-seq-Workshop-2022/tree/main/section_1
 
 ## How to Setup Computer for Section 2 (Lab Section):
 Please take a look at the document here of how to setup R, Rstudio, and packages:  
 https://github.com/tstephie/UMICH-CDS-SR-scRNA-seq-Workshop-2022/blob/main/section_2/How%20to%20Setup%20for%20Section%202.docx
+
+### Section 2 Coding Scripts
+Section 2's R coding scripts (.rmd and .html) can be found here:
+https://github.com/tstephie/UMICH-CDS-SR-scRNA-seq-Workshop-2022/tree/main/section_2/code
 
 ## Schedule (Tentative)
 
