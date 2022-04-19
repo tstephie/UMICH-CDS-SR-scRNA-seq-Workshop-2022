@@ -156,13 +156,6 @@ DimPlot(fb, group.by = c('harmony_clusters', 'sample_id'), reduction = 'umap_har
 
 ```
 
-### Save Fibroblast Object
-
-```{r eval=FALSE}
-saveRDS(fb, file = 'cds_pasca_example_fibro_umap_harmony_032922.rds')
-
-```
-
 ### Cell Annotation
 
 ```{r fig.height=5, fig.width=9}
@@ -193,7 +186,7 @@ DimPlot(fb, reduction = 'umap_harmony', group.by = 'annote_1')
 
 ```
 
-### Save Fibroblast (newly annotated)
+### Save Fibroblast Object
 
 ```{r eval=FALSE}
 saveRDS(fb, file = 'cds_pasca_example_fibro_umap_harmony_annote_1_032922.rds')

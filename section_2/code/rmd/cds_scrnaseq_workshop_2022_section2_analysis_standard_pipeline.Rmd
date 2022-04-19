@@ -1033,7 +1033,7 @@ We can run through all the clusters easily with this function:
 
 # save DE table
 ## DO NOT RUN
-# write_csv(merged_ob, 'tables/cds_pasca_example_cluster0_de_032222.csv')
+# write_csv(de, 'tables/cds_pasca_unbatched_de.csv')
 
 ```
 
@@ -1043,7 +1043,7 @@ Instead of running all the clusters right now, I have run it for you
 because it can take a long time. You can load in the full DE table with the code below:
 
 ```{r}
-de <- read_csv('D:/scRNA-seq pipeline/pasca_dataset/tables/cds_pasca_example_cluster0_de_032222.csv')
+de <- read_csv('D:/scRNA-seq pipeline/pasca_dataset/tables/cds_pasca_unbatched_de.csv')
 
 ```
 

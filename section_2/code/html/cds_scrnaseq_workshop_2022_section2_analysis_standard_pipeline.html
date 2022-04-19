@@ -2025,8 +2025,8 @@ head(colnames(merged_ob))</code></pre>
 rm(obs)
 gc()</code></pre>
 <pre><code>##            used  (Mb) gc trigger   (Mb)  max used   (Mb)
-## Ncells  6423153 343.1    9740307  520.2   9740307  520.2
-## Vcells 94679605 722.4  292887111 2234.6 265427862 2025.1</code></pre>
+## Ncells  6423015 343.1    9740197  520.2   9740197  520.2
+## Vcells 94679259 722.4  292886550 2234.6 265427516 2025.1</code></pre>
 <hr />
 </div>
 <div id="normalization" class="section level2">
@@ -2268,7 +2268,7 @@ merged_ob &lt;- FindClusters(merged_ob)</code></pre>
 ## Running Louvain algorithm...
 ## Maximum modularity in 10 random starts: 0.9423
 ## Number of communities: 30
-## Elapsed time: 2 seconds</code></pre>
+## Elapsed time: 1 seconds</code></pre>
 <p><br></p>
 <p>We will use the PCA results from above when clustering, which is the
 default in Seurat. We will also use a resolution 0.8, which is the
@@ -2306,20 +2306,20 @@ merged_ob &lt;- RunUMAP(merged_ob, dims = 1:pcs)</code></pre>
 <pre><code>## Warning: The default method for RunUMAP has changed from calling Python UMAP via reticulate to the R-native UWOT using the cosine metric
 ## To use Python UMAP via reticulate, set umap.method to &#39;umap-learn&#39; and metric to &#39;correlation&#39;
 ## This message will be shown once per session</code></pre>
-<pre><code>## 18:39:46 UMAP embedding parameters a = 0.9922 b = 1.112</code></pre>
-<pre><code>## 18:39:46 Read 13082 rows and found 18 numeric columns</code></pre>
-<pre><code>## 18:39:46 Using Annoy for neighbor search, n_neighbors = 30</code></pre>
-<pre><code>## 18:39:46 Building Annoy index with metric = cosine, n_trees = 50</code></pre>
+<pre><code>## 21:15:43 UMAP embedding parameters a = 0.9922 b = 1.112</code></pre>
+<pre><code>## 21:15:43 Read 13082 rows and found 18 numeric columns</code></pre>
+<pre><code>## 21:15:43 Using Annoy for neighbor search, n_neighbors = 30</code></pre>
+<pre><code>## 21:15:43 Building Annoy index with metric = cosine, n_trees = 50</code></pre>
 <pre><code>## 0%   10   20   30   40   50   60   70   80   90   100%</code></pre>
 <pre><code>## [----|----|----|----|----|----|----|----|----|----|</code></pre>
 <pre><code>## **************************************************|
-## 18:39:49 Writing NN index file to temp file C:\Users\kawai\AppData\Local\Temp\RtmpGe5oKn\file4bec6c9afb1
-## 18:39:49 Searching Annoy index using 1 thread, search_k = 3000
-## 18:39:56 Annoy recall = 100%
-## 18:39:57 Commencing smooth kNN distance calibration using 1 thread
-## 18:39:59 Initializing from normalized Laplacian + noise
-## 18:40:03 Commencing optimization for 200 epochs, with 551142 positive edges
-## 18:40:26 Optimization finished</code></pre>
+## 21:15:46 Writing NN index file to temp file C:\Users\kawai\AppData\Local\Temp\RtmpItQmqU\file1d841402674a
+## 21:15:46 Searching Annoy index using 1 thread, search_k = 3000
+## 21:15:53 Annoy recall = 100%
+## 21:15:53 Commencing smooth kNN distance calibration using 1 thread
+## 21:15:56 Initializing from normalized Laplacian + noise
+## 21:15:59 Commencing optimization for 200 epochs, with 551142 positive edges
+## 21:16:20 Optimization finished</code></pre>
 <p><br></p>
 <p>There are many ways to customize your UMAPs with the DimPlot
 function. The parameters I have shown are not all of them, but there are
@@ -2380,17 +2380,17 @@ head(de_unbatch_0)</code></pre>
 
 # save DE table
 ## DO NOT RUN
-# write_csv(merged_ob, &#39;tables/cds_pasca_example_cluster0_de_032222.csv&#39;)</code></pre>
+# write_csv(de, &#39;tables/cds_pasca_unbatched_de.csv&#39;)</code></pre>
 <p><br></p>
 <p>Instead of running all the clusters right now, I have run it for you
 because it can take a long time. You can load in the full DE table with
 the code below:</p>
-<pre class="r"><code>de &lt;- read_csv(&#39;D:/scRNA-seq pipeline/pasca_dataset/tables/cds_pasca_example_cluster0_de_032222.csv&#39;)</code></pre>
-<pre><code>## Rows: 2273 Columns: 6
+<pre class="r"><code>de &lt;- read_csv(&#39;D:/scRNA-seq pipeline/pasca_dataset/tables/cds_pasca_unbatched_de.csv&#39;)</code></pre>
+<pre><code>## Rows: 81156 Columns: 7
 ## -- Column specification --------------------------------------------------------
 ## Delimiter: &quot;,&quot;
 ## chr (1): gene
-## dbl (5): p_val, avg_log2FC, pct.1, pct.2, p_val_adj
+## dbl (6): p_val, avg_log2FC, pct.1, pct.2, p_val_adj, cluster
 ## 
 ## i Use `spec()` to retrieve the full column specification for this data.
 ## i Specify the column types or set `show_col_types = FALSE` to quiet this message.</code></pre>
