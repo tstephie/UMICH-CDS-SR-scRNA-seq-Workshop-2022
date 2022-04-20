@@ -12,10 +12,10 @@ Dates: April 18-19, 2022
 The example datasets and recordings used in this workshop are found in the Google Drive link here:  
 https://drive.google.com/drive/folders/1T2YJcnFyNdmY8ohfN4hAu4JVgQFyZ-v2?usp=sharing  
 
-Folders:
-data = contains tables used in Section 2
-objects = contains Seurat objects used in Section 2
-plots = contains plots that were made for both Section 1 and 2
+Folders:  
+data = contains tables used in Section 2  
+objects = contains Seurat objects used in Section 2  
+plots = contains plots that were made for both Section 1 and 2  
 
 ### Lecture Slides and Coding Scripts  
 Lecture slides for Section 1 and coding scripts for both sections can be found here:  
